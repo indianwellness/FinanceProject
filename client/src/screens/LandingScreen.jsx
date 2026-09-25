@@ -314,8 +314,8 @@ export default function LandingScreen() {
                     <span>Annual Business Turnover</span>
                     <span className="text-[#0F2F57] text-sm tabular-nums">₹{calcTurnover.toFixed(1)} Crore</span>
                   </div>
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {[1.0, 2.5, 5.0, 10.0, 25.0].map((t) => (
+                  <div className="grid grid-cols-6 gap-1.5">
+                    {[0.5, 1.0, 2.5, 5.0, 10.0, 25.0].map((t) => (
                       <button
                         key={t}
                         type="button"

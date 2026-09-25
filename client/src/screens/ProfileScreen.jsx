@@ -77,6 +77,7 @@ export default function ProfileScreen() {
   ];
 
   const turnoverOptions = [
+    { range: '₹10L – ₹50L', label: 'Nano Enterprise', revenue: '₹30 Lakh', pbf: 'MUDRA / PBF up to ₹10L' },
     { range: '₹50L – ₹1Cr', label: 'Micro Enterprise', revenue: '₹85 Lakh', pbf: 'PBF up to ₹20L' },
     { range: '₹1Cr – ₹5Cr', label: 'Small Enterprise', revenue: '₹4.80 Crore', pbf: 'PBF up to ₹1.0Cr' },
     { range: '₹5Cr – ₹25Cr', label: 'Medium Enterprise', revenue: '₹14.50 Crore', pbf: 'PBF up to ₹5.0Cr' },
@@ -244,7 +245,7 @@ export default function ProfileScreen() {
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   Annual Turnover Bracket (FY 2025–26)
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                   {turnoverOptions.map((opt) => {
                     const isSelected = formData.turnoverRange === opt.range;
                     return (
