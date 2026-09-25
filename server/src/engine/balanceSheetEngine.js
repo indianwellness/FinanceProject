@@ -58,8 +58,12 @@ export function projectBalanceSheets({
 
   const sheets = [];
 
+  let previousNetWorth = runningCapital + runningReserves;
+
   pnlProjections.forEach((pnl, idx) => {
     const y = pnl.year;
+    const yearOpeningCapital = previousNetWorth;
+    const capitalIntroduced = (y === 1 && promoterCapexMargin > 0) ? promoterCapexMargin : 0;
 
     // 1. Capital & Reserves Accumulation
     // In Year 1, credit promoter's equity margin for capex into Capital Account
@@ -81,6 +85,7 @@ export function projectBalanceSheets({
 
     runningReserves += retainedPat;
     const totalNetWorth = Math.round((runningCapital + runningReserves) * 100) / 100;
+    previousNetWorth = totalNetWorth;
     // Adjusted Tangible Net Worth (ATNW) includes subordinated promoter Quasi-Equity (RBI/CMA benchmark)
     const adjustedTangibleNetWorth = Math.round((totalNetWorth + unsecuredLoansQuasi) * 100) / 100;
 
@@ -151,12 +156,19 @@ export function projectBalanceSheets({
     sheets.push({
       year: y,
       sourcesOfFunds: {
+        openingCapital: yearOpeningCapital,
+        capitalIntroduced,
+        drawings,
+        retainedPat,
+        closingCapital: totalNetWorth,
         proprietorCapital: runningCapital,
         reservesAndSurplus: runningReserves,
         totalNetWorth,
         adjustedTangibleNetWorth,
         termLoanClosing,
+        closingTermLoan: termLoanClosing,
         bankCcOutstanding: activeCc,
+        ccOutstanding: activeCc,
         totalSecuredLoans,
         unsecuredLoansQuasi,
         unsecuredLoansExternal,
@@ -170,9 +182,11 @@ export function projectBalanceSheets({
       applicationOfFunds: {
         grossFixedAssets,
         netFixedAssets,
+        netFixedAssetsWdv: netFixedAssets,
         inventories: projectedStock,
         tradeDebtors: projectedDebtors,
         loansAndAdvances,
+        otherCurrentAssets: loansAndAdvances,
         cashAndBank,
         totalCurrentAssets,
         totalApplication

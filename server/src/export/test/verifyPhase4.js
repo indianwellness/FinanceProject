@@ -101,6 +101,11 @@ async function runPhase4Tests() {
   let gpCell = null;
   let patCell = null;
   let deltaCell = null;
+  let openingCapitalVal = null;
+  let termLoanVal = null;
+  let netFixedAssetsVal = null;
+  let totalSourcesCell = null;
+  let totalAppCell = null;
 
   finalSheet.eachRow((row, rowNumber) => {
     const label = String(row.getCell(2).value || '');
@@ -112,6 +117,21 @@ async function runPhase4Tests() {
     }
     if (label.includes('NET PROFIT AFTER TAX')) {
       patCell = row.getCell(3).value;
+    }
+    if (label.includes('Opening Capital')) {
+      openingCapitalVal = row.getCell(3).value;
+    }
+    if (label.includes('Secured Loans: Bank Term Loan')) {
+      termLoanVal = row.getCell(3).value;
+    }
+    if (label.includes('Net Fixed Assets (WDV Block)')) {
+      netFixedAssetsVal = row.getCell(3).value;
+    }
+    if (label.includes('TOTAL SOURCES OF FUNDS')) {
+      totalSourcesCell = row.getCell(3).value;
+    }
+    if (label.includes('TOTAL APPLICATION OF FUNDS')) {
+      totalAppCell = row.getCell(3).value;
     }
     if (label.includes('Balance Sheet Integrity Check')) {
       deltaCell = row.getCell(3).value;
@@ -131,6 +151,30 @@ async function runPhase4Tests() {
     `PAT has dynamic tax deduction formula: ${patCell?.formula}`
   );
   assert(
+    openingCapitalVal != null && openingCapitalVal > 0,
+    `Opening Capital is populated and positive: ₹${(openingCapitalVal / 100000).toFixed(2)} Lakhs (not null!)`
+  );
+  assert(
+    termLoanVal != null && termLoanVal > 0,
+    `Bank Term Loan in Balance Sheet is populated: ₹${(termLoanVal / 100000).toFixed(2)} Lakhs (not null!)`
+  );
+  assert(
+    netFixedAssetsVal != null && netFixedAssetsVal > 0,
+    `Net Fixed Assets in Balance Sheet is populated: ₹${(netFixedAssetsVal / 100000).toFixed(2)} Lakhs (not null!)`
+  );
+  assert(
+    totalSourcesCell != null && totalSourcesCell.result > 0,
+    `Total Sources of Funds evaluated: ₹${(totalSourcesCell.result / 100000).toFixed(2)} Lakhs`
+  );
+  assert(
+    totalAppCell != null && totalAppCell.result > 0,
+    `Total Application of Funds evaluated: ₹${(totalAppCell.result / 100000).toFixed(2)} Lakhs`
+  );
+  assert(
+    Math.abs(totalSourcesCell.result - totalAppCell.result) <= 0.05,
+    `Double-Entry equality verified: Sources == Applications (Diff: ₹${Math.abs(totalSourcesCell.result - totalAppCell.result)})`
+  );
+  assert(
     typeof deltaCell === 'object' && deltaCell.formula,
     `Balance Sheet Delta has dynamic reconciliation formula: ${deltaCell?.formula}`
   );
@@ -141,8 +185,14 @@ async function runPhase4Tests() {
 
   console.log('\nTEST SUITE 5: EMI Amortization Schedule & Formulas');
   const emiSheet = loadedWb.getWorksheet('EMI');
-  const emiMonth1Interest = emiSheet.getCell('C13').value;
-  const emiMonth1Closing = emiSheet.getCell('F13').value;
+  let month1Row = null;
+  emiSheet.eachRow(row => {
+    if (row.getCell(1).value === 1) month1Row = row;
+  });
+  assert(month1Row !== null, 'Month 1 amortization row dynamically found in EMI schedule');
+
+  const emiMonth1Interest = month1Row?.getCell(3).value;
+  const emiMonth1Closing = month1Row?.getCell(6).value;
 
   assert(
     typeof emiMonth1Interest === 'object' && emiMonth1Interest.formula && emiMonth1Interest.formula.includes('*'),
@@ -156,30 +206,69 @@ async function runPhase4Tests() {
   console.log('\nTEST SUITE 6: DSCR Statement & Average Benchmark');
   const dscrSheet = loadedWb.getWorksheet('DSCR');
   let dscrY1Cell = null;
+  let dscrTotCell = null;
   let dscrAvgCell = null;
 
-  dscrSheet.eachRow((row, rowNumber) => {
+  dscrSheet.eachRow(row => {
     const label = String(row.getCell(2).value || '');
     if (label.includes('DEBT SERVICE COVERAGE RATIO')) {
       dscrY1Cell = row.getCell(3).value;
-      dscrAvgCell = row.getCell(9).value; // Average column (Col I = 9 for 5-year model)
+      dscrTotCell = row.getCell(8).value; // Total column (Col H = 8)
+      dscrAvgCell = row.getCell(9).value; // Average column (Col I = 9)
     }
   });
 
   assert(
-    typeof dscrY1Cell === 'object' && dscrY1Cell.formula && dscrY1Cell.formula.includes('/'),
-    `Annual DSCR has dynamic CashAccruals / DebtObligation formula: ${dscrY1Cell?.formula}`
+    typeof dscrY1Cell === 'object' && dscrY1Cell.formula && dscrY1Cell.formula.includes('IF('),
+    `Annual DSCR guarded against division by zero: ${dscrY1Cell?.formula}`
   );
   assert(
-    typeof dscrAvgCell === 'object' && dscrAvgCell.formula && dscrAvgCell.formula.includes('AVERAGE'),
-    `Average DSCR has dynamic AVERAGE formula: ${dscrAvgCell?.formula}`
+    dscrTotCell === '—',
+    `Total column on DSCR row has formatted placeholder '—' (no unstyled table hole)`
+  );
+  assert(
+    typeof dscrAvgCell === 'object' && dscrAvgCell.formula && dscrAvgCell.formula.includes('IFERROR('),
+    `Average DSCR guarded with IFERROR: ${dscrAvgCell?.formula}`
   );
   assert(
     dscrAvgCell?.result >= 1.50,
     `Average DSCR result meets institutional bankable standard: ${dscrAvgCell?.result}`
   );
 
-  console.log('\n====================================================');
+  console.log('\nTEST SUITE 7: Extended Tenures & Zero-Debt Collision Immunity');
+  // 1. Extended 10-year tenure (120 months) collision immunity
+  const tenYearData = { ...normalized, tenureMonths: 120, horizonYears: 10 };
+  const dpr10Year = generateDprProjections(tenYearData);
+  const wb10YearBuf = await generateDprExcelWorkbook({ dpr: dpr10Year, normalizedData: tenYearData });
+  const wb10Year = new ExcelJS.Workbook();
+  await wb10Year.xlsx.load(wb10YearBuf);
+  const emi10YearSheet = wb10Year.getWorksheet('EMI');
+
+  let m1Row10Y = null;
+  emi10YearSheet.eachRow(row => {
+    if (row.getCell(1).value === 1) m1Row10Y = row;
+  });
+  assert(m1Row10Y !== null, '10-Year Loan (120 mos): Month 1 amortization row dynamically placed');
+  assert(m1Row10Y?.number >= 17, `10-Year Loan Month 1 starts safely below annual table at Row ${m1Row10Y?.number} (>= 17)`);
+
+  // 2. Zero-debt borrower (loanAmount = 0) DSCR immunity
+  const zeroDebtData = { ...normalized, loanAmount: 0 };
+  const dprZeroDebt = generateDprProjections(zeroDebtData);
+  const wbZeroDebtBuf = await generateDprExcelWorkbook({ dpr: dprZeroDebt, normalizedData: zeroDebtData });
+  const wbZeroDebt = new ExcelJS.Workbook();
+  await wbZeroDebt.xlsx.load(wbZeroDebtBuf);
+  const dscrZeroSheet = wbZeroDebt.getWorksheet('DSCR');
+  let dscrZeroY1 = null;
+  dscrZeroSheet.eachRow(row => {
+    const label = String(row.getCell(2).value || '');
+    if (label.includes('DEBT SERVICE COVERAGE RATIO')) {
+      dscrZeroY1 = row.getCell(3).value;
+    }
+  });
+  assert(
+    typeof dscrZeroY1 === 'object' && dscrZeroY1.result === 'N/A',
+    `Zero-debt borrower displays clean 'N/A' for DSCR without #DIV/0! error: ${dscrZeroY1?.result}`
+  );
   console.log(`TOTAL TESTS: ${passed + failed} | PASSED: ${passed} | FAILED: ${failed}`);
   console.log('====================================================');
 

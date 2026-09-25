@@ -32,33 +32,44 @@ export default function DashboardScreen() {
     if (!dprOutput || !dprInput) return;
     try {
       setIsExportingExcel(true);
-      const res = await fetch('http://localhost:5000/api/dpr/export-excel', {
+      const res = await fetch('/api/dpr/export-excel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dpr: dprOutput, normalizedData: dprInput })
       });
 
       if (!res.ok) {
-        throw new Error('Server returned an error generating the Excel workbook.');
+        let errorMsg = 'Server returned an error generating the Excel workbook.';
+        try {
+          const errJson = await res.json();
+          if (errJson?.error) errorMsg = errJson.error;
+        } catch (_) {}
+        throw new Error(errorMsg);
       }
 
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const sanitizedName = (dprInput.entityName || 'MSME_Borrower').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const sanitizedName = (dprInput.entityName || 'MSME_Borrower').replace(/[^a-zA-Z0-9_\-\s]/g, '_').trim().replace(/\s+/g, '_');
       a.download = `DPR_${sanitizedName}_Bank_Projections.xlsx`;
       document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        if (a.parentNode) {
+          a.parentNode.removeChild(a);
+        }
+      }, 1000);
 
       if (showToast) {
         showToast('Bank-ready Excel DPR downloaded successfully!', 'success');
       }
     } catch (err) {
       console.error('Download error:', err);
-      alert('Failed to download Excel report: ' + err.message);
+      if (showToast) {
+        showToast('Failed to download Excel report: ' + err.message, 'error');
+      }
     } finally {
       setIsExportingExcel(false);
     }

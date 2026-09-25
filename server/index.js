@@ -202,14 +202,17 @@ app.post('/api/dpr/export-excel', async (req, res) => {
     let dpr = req.body?.dpr;
     let normalizedData = req.body?.normalizedData;
 
-    if (!dpr) {
+    const isValidDpr = dpr && typeof dpr === 'object' && dpr.metadata && Array.isArray(dpr.projectedPnl);
+
+    if (!isValidDpr) {
       // Validate and compute DPR on the fly
       const candidateData = req.body || {};
       const validation = validateAndNormalizeConvergenceData(candidateData);
       if (!validation.isValid) {
         return res.status(422).json({
           success: false,
-          errors: validation.errors
+          errors: validation.errors,
+          warnings: validation.warnings
         });
       }
       normalizedData = validation.normalizedData;
@@ -218,11 +221,12 @@ app.post('/api/dpr/export-excel', async (req, res) => {
 
     const buffer = await generateDprExcelWorkbook({ dpr, normalizedData });
     const rawName = normalizedData?.entityName || dpr?.metadata?.entityName || 'MSME_Borrower';
-    const sanitizedName = rawName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const sanitizedName = rawName.replace(/[^a-zA-Z0-9_\-\s]/g, '_').trim().replace(/\s+/g, '_') || 'MSME_Borrower';
     const fileName = `DPR_${sanitizedName}_Bank_Projections.xlsx`;
+    const encodedFileName = encodeURIComponent(fileName);
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodedFileName}`);
     res.setHeader('Content-Length', buffer.length);
     return res.send(buffer);
   } catch (err) {

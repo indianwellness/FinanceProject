@@ -222,16 +222,19 @@ function buildInfoPage(workbook, dpr, data) {
 
   // Calculate project capex from fixed assets or additions
   let totalCapex = 0;
-  if (data.newAssetAdditions && typeof data.newAssetAdditions === 'object') {
-    Object.values(data.newAssetAdditions).forEach(val => totalCapex += (Number(val) || 0));
+  const initialAdditions = data.newAssetAdditionsPerYear?.[1] ?? data.newAssetAdditions;
+  if (initialAdditions && typeof initialAdditions === 'object') {
+    Object.values(initialAdditions).forEach(val => totalCapex += (Number(val) || 0));
   }
   if (totalCapex <= 0) totalCapex = loanAmount; // standard project assumption
 
   const wcMargin = Math.round(ccAmount * 0.25);
   const totalCost = totalCapex + wcMargin;
 
-  const promoterEquity = Math.max(0, totalCost - loanAmount);
   const quasiEquity = Number(data.unsecuredLoansQuasiEquity) || 0;
+  const remainingRequired = Math.max(0, totalCost - loanAmount);
+  const quasiFinancing = Math.min(quasiEquity, remainingRequired);
+  const promoterCapital = Math.max(0, remainingRequired - quasiFinancing);
 
   const tableStart = r;
   // Row 1: Capex vs Term Loan
@@ -250,7 +253,7 @@ function buildInfoPage(workbook, dpr, data) {
   ws.getCell(`D${r}`).value = wcMargin;
   ws.getCell(`D${r}`).numFmt = NUM_FORMATS.currency;
   ws.getCell(`E${r}`).value = 'Promoter Capital Contribution';
-  ws.getCell(`F${r}`).value = Math.max(0, promoterEquity - quasiEquity);
+  ws.getCell(`F${r}`).value = promoterCapital;
   ws.getCell(`F${r}`).numFmt = NUM_FORMATS.currency;
   r++;
 
@@ -260,7 +263,7 @@ function buildInfoPage(workbook, dpr, data) {
   ws.getCell(`D${r}`).value = 0;
   ws.getCell(`D${r}`).numFmt = NUM_FORMATS.currency;
   ws.getCell(`E${r}`).value = 'Subordinated Quasi-Equity (Promoter Debt)';
-  ws.getCell(`F${r}`).value = quasiEquity;
+  ws.getCell(`F${r}`).value = quasiFinancing;
   ws.getCell(`F${r}`).numFmt = NUM_FORMATS.currency;
   const tableEnd = r;
   r++;
@@ -275,7 +278,7 @@ function buildInfoPage(workbook, dpr, data) {
 
   ws.getCell(`E${r}`).value = 'TOTAL MEANS OF FINANCE';
   ws.getCell(`E${r}`).font = FONTS.boldRow;
-  ws.getCell(`F${r}`).value = { formula: `SUM(F${tableStart}:F${tableEnd})`, result: loanAmount + promoterEquity };
+  ws.getCell(`F${r}`).value = { formula: `SUM(F${tableStart}:F${tableEnd})`, result: totalCost };
   ws.getCell(`F${r}`).font = FONTS.boldRow;
   ws.getCell(`F${r}`).numFmt = NUM_FORMATS.currency;
 
@@ -680,7 +683,7 @@ function buildFinalReport(workbook, dpr, data) {
   ws.getCell(`B${r}`).value = 'Opening Capital';
   years.forEach((y, i) => {
     const colLetter = getColLetter(startCol + i);
-    const resultVal = dpr.projectedBalanceSheet[i].sourcesOfFunds.openingCapital;
+    const resultVal = dpr.projectedBalanceSheet[i].sourcesOfFunds.openingCapital ?? 0;
     ws.getCell(`${colLetter}${r}`).value = resultVal;
     ws.getCell(`${colLetter}${r}`).numFmt = NUM_FORMATS.currency;
   });
@@ -690,7 +693,7 @@ function buildFinalReport(workbook, dpr, data) {
   ws.getCell(`B${r}`).value = 'Add: Capital Introduced / Retained Equity';
   years.forEach((y, i) => {
     const colLetter = getColLetter(startCol + i);
-    const resultVal = dpr.projectedBalanceSheet[i].sourcesOfFunds.capitalIntroduced;
+    const resultVal = dpr.projectedBalanceSheet[i].sourcesOfFunds.capitalIntroduced ?? 0;
     ws.getCell(`${colLetter}${r}`).value = resultVal;
     ws.getCell(`${colLetter}${r}`).numFmt = NUM_FORMATS.currency;
   });
@@ -710,7 +713,7 @@ function buildFinalReport(workbook, dpr, data) {
   ws.getCell(`B${r}`).value = 'Less: Proprietor / Partner Drawings';
   years.forEach((y, i) => {
     const colLetter = getColLetter(startCol + i);
-    const resultVal = dpr.projectedBalanceSheet[i].sourcesOfFunds.drawings;
+    const resultVal = dpr.projectedBalanceSheet[i].sourcesOfFunds.drawings ?? 0;
     ws.getCell(`${colLetter}${r}`).value = resultVal;
     ws.getCell(`${colLetter}${r}`).numFmt = NUM_FORMATS.currency;
   });
@@ -754,7 +757,7 @@ function buildFinalReport(workbook, dpr, data) {
   ws.getCell(`B${r}`).value = 'Secured Loans: Bank Term Loan';
   years.forEach((y, i) => {
     const colLetter = getColLetter(startCol + i);
-    const resultVal = dpr.projectedBalanceSheet[i].sourcesOfFunds.closingTermLoan;
+    const resultVal = dpr.projectedBalanceSheet[i].sourcesOfFunds.termLoanClosing ?? dpr.projectedBalanceSheet[i].sourcesOfFunds.closingTermLoan ?? 0;
     ws.getCell(`${colLetter}${r}`).value = resultVal;
     ws.getCell(`${colLetter}${r}`).numFmt = NUM_FORMATS.currency;
   });
@@ -764,7 +767,7 @@ function buildFinalReport(workbook, dpr, data) {
   ws.getCell(`B${r}`).value = 'Secured Loans: Bank Cash Credit (CC/OD)';
   years.forEach((y, i) => {
     const colLetter = getColLetter(startCol + i);
-    const resultVal = dpr.projectedBalanceSheet[i].sourcesOfFunds.ccOutstanding;
+    const resultVal = dpr.projectedBalanceSheet[i].sourcesOfFunds.bankCcOutstanding ?? dpr.projectedBalanceSheet[i].sourcesOfFunds.ccOutstanding ?? 0;
     ws.getCell(`${colLetter}${r}`).value = resultVal;
     ws.getCell(`${colLetter}${r}`).numFmt = NUM_FORMATS.currency;
   });
@@ -818,7 +821,7 @@ function buildFinalReport(workbook, dpr, data) {
   ws.getCell(`B${r}`).value = 'Net Fixed Assets (WDV Block)';
   years.forEach((y, i) => {
     const colLetter = getColLetter(startCol + i);
-    const resultVal = dpr.projectedBalanceSheet[i].applicationOfFunds.netFixedAssetsWdv;
+    const resultVal = dpr.projectedBalanceSheet[i].applicationOfFunds.netFixedAssets ?? dpr.projectedBalanceSheet[i].applicationOfFunds.netFixedAssetsWdv ?? 0;
     ws.getCell(`${colLetter}${r}`).value = resultVal;
     ws.getCell(`${colLetter}${r}`).numFmt = NUM_FORMATS.currency;
   });
@@ -858,7 +861,7 @@ function buildFinalReport(workbook, dpr, data) {
   ws.getCell(`B${r}`).value = 'Other Current Assets / Loans & Advances';
   years.forEach((y, i) => {
     const colLetter = getColLetter(startCol + i);
-    const resultVal = dpr.projectedBalanceSheet[i].applicationOfFunds.otherCurrentAssets;
+    const resultVal = dpr.projectedBalanceSheet[i].applicationOfFunds.loansAndAdvances ?? dpr.projectedBalanceSheet[i].applicationOfFunds.otherCurrentAssets ?? 0;
     ws.getCell(`${colLetter}${r}`).value = resultVal;
     ws.getCell(`${colLetter}${r}`).numFmt = NUM_FORMATS.currency;
   });
@@ -1029,7 +1032,7 @@ function buildEmiSchedule(workbook, dpr) {
     ar++;
   });
 
-  let r = 12;
+  let r = Math.max(13, ar + 2);
 
   // Monthly Table Headers
   const headers = ['Month', 'Opening Principal (₹)', 'Interest Paid (₹)', 'Principal Repaid (₹)', 'Total Installment (₹)', 'Closing Principal (₹)'];
@@ -1156,13 +1159,15 @@ function buildOdSchedule(workbook, dpr, data) {
     ws.getCell(`F${r}`).value = sanctionedLimit;
     ws.getCell(`F${r}`).numFmt = NUM_FORMATS.currency;
 
+    const effectiveLimit = Math.min(Math.round((wc.stock + wc.debtors) * 0.75), sanctionedLimit);
+
     // Effective Limit = MIN(DP, SanctionedLimit)
-    ws.getCell(`G${r}`).value = { formula: `MIN(E${r}, F${r})`, result: Math.min(Math.round((wc.stock + wc.debtors) * 0.75), sanctionedLimit) };
+    ws.getCell(`G${r}`).value = { formula: `MIN(E${r}, F${r})`, result: effectiveLimit };
     ws.getCell(`G${r}`).font = FONTS.boldRow;
     ws.getCell(`G${r}`).numFmt = NUM_FORMATS.currency;
 
     // Annual Interest = EffectiveLimit * Rate
-    ws.getCell(`H${r}`).value = { formula: `ROUND(G${r}*${ccRate.toFixed(4)}, 0)`, result: Math.round(sanctionedLimit * ccRate) };
+    ws.getCell(`H${r}`).value = { formula: `ROUND(G${r}*${ccRate.toFixed(4)}, 0)`, result: Math.round(effectiveLimit * ccRate) };
     ws.getCell(`H${r}`).numFmt = NUM_FORMATS.currency;
 
     r++;
@@ -1327,9 +1332,10 @@ function buildDscrStatement(workbook, dpr) {
     ws.getCell(`${col}${r}`).value = dpr.projectedPnl[i].pat;
     ws.getCell(`${col}${r}`).numFmt = NUM_FORMATS.currency;
   });
-  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  const totPat = Math.round(dpr.projectedPnl.reduce((sum, p) => sum + p.pat, 0) * 100) / 100;
+  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: totPat };
   ws.getCell(`${getCol(totCol)}${r}`).numFmt = NUM_FORMATS.currency;
-  ws.getCell(`${getCol(avgCol)}${r}`).value = { formula: `AVERAGE(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  ws.getCell(`${getCol(avgCol)}${r}`).value = { formula: `AVERAGE(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: Math.round((totPat / horizon) * 100) / 100 };
   ws.getCell(`${getCol(avgCol)}${r}`).numFmt = NUM_FORMATS.currency;
   r++;
 
@@ -1341,9 +1347,10 @@ function buildDscrStatement(workbook, dpr) {
     ws.getCell(`${col}${r}`).value = dpr.projectedPnl[i].depreciation;
     ws.getCell(`${col}${r}`).numFmt = NUM_FORMATS.currency;
   });
-  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  const totDep = Math.round(dpr.projectedPnl.reduce((sum, p) => sum + p.depreciation, 0) * 100) / 100;
+  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: totDep };
   ws.getCell(`${getCol(totCol)}${r}`).numFmt = NUM_FORMATS.currency;
-  ws.getCell(`${getCol(avgCol)}${r}`).value = { formula: `AVERAGE(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  ws.getCell(`${getCol(avgCol)}${r}`).value = { formula: `AVERAGE(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: Math.round((totDep / horizon) * 100) / 100 };
   ws.getCell(`${getCol(avgCol)}${r}`).numFmt = NUM_FORMATS.currency;
   r++;
 
@@ -1355,9 +1362,10 @@ function buildDscrStatement(workbook, dpr) {
     ws.getCell(`${col}${r}`).value = dpr.projectedPnl[i].financeCosts.interestTermLoan;
     ws.getCell(`${col}${r}`).numFmt = NUM_FORMATS.currency;
   });
-  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  const totInt = Math.round(dpr.projectedPnl.reduce((sum, p) => sum + p.financeCosts.interestTermLoan, 0) * 100) / 100;
+  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: totInt };
   ws.getCell(`${getCol(totCol)}${r}`).numFmt = NUM_FORMATS.currency;
-  ws.getCell(`${getCol(avgCol)}${r}`).value = { formula: `AVERAGE(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  ws.getCell(`${getCol(avgCol)}${r}`).value = { formula: `AVERAGE(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: Math.round((totInt / horizon) * 100) / 100 };
   ws.getCell(`${getCol(avgCol)}${r}`).numFmt = NUM_FORMATS.currency;
   r++;
 
@@ -1372,10 +1380,11 @@ function buildDscrStatement(workbook, dpr) {
     ws.getCell(`${col}${r}`).font = FONTS.boldRow;
     ws.getCell(`${col}${r}`).numFmt = NUM_FORMATS.currency;
   });
-  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  const totAccruals = Math.round(dpr.solvencyRatios.annualRatios.reduce((sum, a) => sum + (a.cashAccrualForDebt || 0), 0) * 100) / 100;
+  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: totAccruals };
   ws.getCell(`${getCol(totCol)}${r}`).font = FONTS.boldRow;
   ws.getCell(`${getCol(totCol)}${r}`).numFmt = NUM_FORMATS.currency;
-  ws.getCell(`${getCol(avgCol)}${r}`).value = { formula: `AVERAGE(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  ws.getCell(`${getCol(avgCol)}${r}`).value = { formula: `AVERAGE(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: Math.round((totAccruals / horizon) * 100) / 100 };
   ws.getCell(`${getCol(avgCol)}${r}`).font = FONTS.boldRow;
   ws.getCell(`${getCol(avgCol)}${r}`).numFmt = NUM_FORMATS.currency;
   r += 2;
@@ -1388,7 +1397,8 @@ function buildDscrStatement(workbook, dpr) {
     ws.getCell(`${col}${r}`).value = dpr.termLoan.annualAmortization[i]?.principalRepaid || 0;
     ws.getCell(`${col}${r}`).numFmt = NUM_FORMATS.currency;
   });
-  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  const totPrincipal = Math.round(dpr.termLoan.annualAmortization.reduce((sum, a) => sum + a.principalRepaid, 0) * 100) / 100;
+  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: totPrincipal };
   ws.getCell(`${getCol(totCol)}${r}`).numFmt = NUM_FORMATS.currency;
   r++;
 
@@ -1399,7 +1409,7 @@ function buildDscrStatement(workbook, dpr) {
     ws.getCell(`${col}${r}`).value = { formula: `${col}${rowInt}`, result: dpr.projectedPnl[i].financeCosts.interestTermLoan };
     ws.getCell(`${col}${r}`).numFmt = NUM_FORMATS.currency;
   });
-  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: totInt };
   ws.getCell(`${getCol(totCol)}${r}`).numFmt = NUM_FORMATS.currency;
   r++;
 
@@ -1414,33 +1424,43 @@ function buildDscrStatement(workbook, dpr) {
     ws.getCell(`${col}${r}`).font = FONTS.boldRow;
     ws.getCell(`${col}${r}`).numFmt = NUM_FORMATS.currency;
   });
-  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})` };
+  const totObligation = Math.round(dpr.solvencyRatios.annualRatios.reduce((sum, a) => sum + (a.annualDebtObligation || 0), 0) * 100) / 100;
+  ws.getCell(`${getCol(totCol)}${r}`).value = { formula: `SUM(${getCol(startCol)}${r}:${getCol(endCol)}${r})`, result: totObligation };
   ws.getCell(`${getCol(totCol)}${r}`).font = FONTS.boldRow;
   ws.getCell(`${getCol(totCol)}${r}`).numFmt = NUM_FORMATS.currency;
   r += 2;
 
-  // DSCR Row (A / B)
+  // DSCR Row (A / B) with IF guard against division by zero
   const rowDscr = r;
   ws.getCell(`B${r}`).value = 'DEBT SERVICE COVERAGE RATIO (DSCR = A / B)';
   ws.getCell(`B${r}`).font = FONTS.boldRow;
   years.forEach((y, i) => {
     const col = getCol(startCol + i);
     const resultVal = dpr.solvencyRatios.annualRatios[i]?.dscr;
-    if (resultVal !== null) {
-      ws.getCell(`${col}${r}`).value = { formula: `ROUND(${col}${rowAccruals}/${col}${rowObligation}, 2)`, result: resultVal };
-      ws.getCell(`${col}${r}`).numFmt = NUM_FORMATS.ratio;
-    } else {
-      ws.getCell(`${col}${r}`).value = 'N/A';
-    }
+    const formulaStr = `IF(${col}${rowObligation}>0, ROUND(${col}${rowAccruals}/${col}${rowObligation}, 2), "N/A")`;
+    ws.getCell(`${col}${r}`).value = { formula: formulaStr, result: resultVal ?? 'N/A' };
     ws.getCell(`${col}${r}`).font = FONTS.boldRow;
+    if (resultVal !== null && resultVal !== undefined) {
+      ws.getCell(`${col}${r}`).numFmt = NUM_FORMATS.ratio;
+    }
     ws.getCell(`${col}${r}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.accentGreen } };
     ws.getCell(`${col}${r}`).border = BORDERS.subtotal;
   });
 
+  // Total Column on DSCR row: set clean placeholder to prevent hole in table
+  ws.getCell(`${getCol(totCol)}${rowDscr}`).value = '—';
+  ws.getCell(`${getCol(totCol)}${rowDscr}`).font = FONTS.boldRow;
+  ws.getCell(`${getCol(totCol)}${rowDscr}`).alignment = { horizontal: 'center' };
+  ws.getCell(`${getCol(totCol)}${rowDscr}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.softGray } };
+  ws.getCell(`${getCol(totCol)}${rowDscr}`).border = BORDERS.subtotal;
+
   const avgDscrVal = dpr.solvencyRatios.summary.averageDscr;
-  ws.getCell(`${getCol(avgCol)}${rowDscr}`).value = { formula: `ROUND(AVERAGE(${getCol(startCol)}${rowDscr}:${getCol(endCol)}${rowDscr}), 2)`, result: avgDscrVal };
+  const avgFormula = `IFERROR(ROUND(AVERAGE(${getCol(startCol)}${rowDscr}:${getCol(endCol)}${rowDscr}), 2), "N/A")`;
+  ws.getCell(`${getCol(avgCol)}${rowDscr}`).value = { formula: avgFormula, result: avgDscrVal ?? 'N/A' };
   ws.getCell(`${getCol(avgCol)}${rowDscr}`).font = FONTS.boldRow;
-  ws.getCell(`${getCol(avgCol)}${rowDscr}`).numFmt = NUM_FORMATS.ratio;
+  if (avgDscrVal !== null && avgDscrVal !== undefined) {
+    ws.getCell(`${getCol(avgCol)}${rowDscr}`).numFmt = NUM_FORMATS.ratio;
+  }
   ws.getCell(`${getCol(avgCol)}${rowDscr}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.accentGreen } };
   ws.getCell(`${getCol(avgCol)}${rowDscr}`).border = BORDERS.subtotal;
 
@@ -1461,7 +1481,7 @@ function buildDscrStatement(workbook, dpr) {
   verdict.alignment = { horizontal: 'center', vertical: 'middle' };
   ws.getRow(r).height = 25;
 
-  autoFitColumns(ws);
+  autoFitColumns(ws, 15);
 }
 
 /**
