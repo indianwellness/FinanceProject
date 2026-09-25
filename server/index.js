@@ -7,6 +7,7 @@ import { parseDprExcelWorkbook } from './src/parser/excelParser.js';
 import { validateAndNormalizeConvergenceData } from './src/parser/convergenceSchema.js';
 import { generateDprProjections } from './src/engine/dprEngine.js';
 import { generateDprExcelWorkbook } from './src/export/excelExportEngine.js';
+import { generateDprPdfDocument } from './src/export/pdfExportEngine.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -202,7 +203,13 @@ app.post('/api/dpr/export-excel', async (req, res) => {
     let dpr = req.body?.dpr;
     let normalizedData = req.body?.normalizedData;
 
-    const isValidDpr = dpr && typeof dpr === 'object' && dpr.metadata && Array.isArray(dpr.projectedPnl);
+    const isValidDpr = dpr && typeof dpr === 'object' 
+      && dpr.metadata 
+      && Array.isArray(dpr.projectedPnl)
+      && dpr.termLoan 
+      && dpr.workingCapital 
+      && dpr.solvencyRatios 
+      && Array.isArray(dpr.projectedBalanceSheet);
 
     if (!isValidDpr) {
       // Validate and compute DPR on the fly
@@ -269,6 +276,97 @@ app.get('/api/dpr/sample-export', async (req, res) => {
     return res.send(buffer);
   } catch (err) {
     console.error('Error exporting sample Excel:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/dpr/export-pdf
+ * Generates and streams an institutional, multi-page vector PDF Credit Appraisal Memorandum (CAM)
+ * 
+ * Body:
+ * {
+ *   dpr: Object,           // (Optional) Full DPR output object
+ *   normalizedData: Object // (Optional) Normalized convergence data
+ * }
+ */
+app.post('/api/dpr/export-pdf', async (req, res) => {
+  try {
+    let dpr = req.body?.dpr;
+    let normalizedData = req.body?.normalizedData;
+
+    const isValidDpr = dpr && typeof dpr === 'object' 
+      && dpr.metadata 
+      && Array.isArray(dpr.projectedPnl)
+      && dpr.termLoan 
+      && dpr.workingCapital 
+      && dpr.solvencyRatios 
+      && Array.isArray(dpr.projectedBalanceSheet);
+
+    if (!isValidDpr) {
+      const candidateData = req.body || {};
+      const validation = validateAndNormalizeConvergenceData(candidateData);
+      if (!validation.isValid) {
+        return res.status(422).json({
+          success: false,
+          errors: validation.errors,
+          warnings: validation.warnings
+        });
+      }
+      normalizedData = validation.normalizedData;
+      dpr = generateDprProjections(normalizedData);
+    }
+
+    const buffer = await generateDprPdfDocument({ dpr, normalizedData });
+    const rawName = normalizedData?.entityName || dpr?.metadata?.entityName || 'MSME_Borrower';
+    const sanitizedName = rawName.replace(/[^a-zA-Z0-9_\-\s]/g, '_').trim().replace(/\s+/g, '_') || 'MSME_Borrower';
+    const fileName = `DPR_${sanitizedName}_Credit_Appraisal_Memo.pdf`;
+    const encodedFileName = encodeURIComponent(fileName);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodedFileName}`);
+    res.setHeader('Content-Length', buffer.length);
+    return res.send(buffer);
+  } catch (err) {
+    console.error('Error generating PDF appraisal export:', err);
+    return res.status(500).json({
+      success: false,
+      error: `PDF appraisal export failed: ${err.message}`
+    });
+  }
+});
+
+/**
+ * GET /api/dpr/sample-pdf
+ * Convenience endpoint: parses sample CA workbook, generates DPR, and streams the bank PDF appraisal
+ */
+app.get('/api/dpr/sample-pdf', async (req, res) => {
+  try {
+    const candidatePaths = [
+      path.resolve('data/sample_cma.xlsx'),
+      path.resolve('server/data/sample_cma.xlsx'),
+      path.resolve('../server/data/sample_cma.xlsx')
+    ];
+    const targetPath = candidatePaths.find(p => fs.existsSync(p));
+    if (!targetPath) {
+      return res.status(404).json({ success: false, error: 'Sample workbook not found on server' });
+    }
+
+    const parseResult = parseDprExcelWorkbook(targetPath);
+    const validation = validateAndNormalizeConvergenceData({
+      ...parseResult.normalizedData,
+      horizonYears: 5
+    });
+    const dpr = generateDprProjections(validation.normalizedData);
+    const buffer = await generateDprPdfDocument({ dpr, normalizedData: validation.normalizedData });
+
+    const fileName = 'DPR_Shree_Enterprises_Credit_Appraisal_Memo.pdf';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', buffer.length);
+    return res.send(buffer);
+  } catch (err) {
+    console.error('Error exporting sample PDF:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });

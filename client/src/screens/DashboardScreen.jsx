@@ -15,7 +15,8 @@ import {
   ArrowRight,
   Download,
   RefreshCw,
-  FileSpreadsheet
+  FileSpreadsheet,
+  FileText
 } from 'lucide-react';
 import { useCreditOS } from '../context/CreditOSContext';
 
@@ -23,13 +24,14 @@ export default function DashboardScreen() {
   const { data, dprOutput, dprInput, showToast } = useCreditOS();
   const navigate = useNavigate();
   const [isExportingExcel, setIsExportingExcel] = React.useState(false);
+  const [isExportingPdf, setIsExportingPdf] = React.useState(false);
 
   const { businessProfile, scores, workingCapital, ratios, recommendations, receivablesAgeing } = data;
 
   const isDprActive = Boolean(dprOutput && dprInput);
 
   const handleDownloadExcel = async () => {
-    if (!dprOutput || !dprInput) return;
+    if (!dprOutput || !dprInput || isExportingExcel) return;
     try {
       setIsExportingExcel(true);
       const res = await fetch('/api/dpr/export-excel', {
@@ -72,6 +74,53 @@ export default function DashboardScreen() {
       }
     } finally {
       setIsExportingExcel(false);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!dprOutput || !dprInput || isExportingPdf) return;
+    try {
+      setIsExportingPdf(true);
+      const res = await fetch('/api/dpr/export-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dpr: dprOutput, normalizedData: dprInput })
+      });
+
+      if (!res.ok) {
+        let errorMsg = 'Server returned an error generating the PDF appraisal memo.';
+        try {
+          const errJson = await res.json();
+          if (errJson?.error) errorMsg = errJson.error;
+        } catch (_) {}
+        throw new Error(errorMsg);
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const sanitizedName = (dprInput.entityName || 'MSME_Borrower').replace(/[^a-zA-Z0-9_\-\s]/g, '_').trim().replace(/\s+/g, '_');
+      a.download = `DPR_${sanitizedName}_Credit_Appraisal_Memo.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        if (a.parentNode) {
+          a.parentNode.removeChild(a);
+        }
+      }, 1000);
+
+      if (showToast) {
+        showToast('Credit Appraisal Memo (.pdf) downloaded successfully!', 'success');
+      }
+    } catch (err) {
+      console.error('PDF download error:', err);
+      if (showToast) {
+        showToast('Failed to download PDF appraisal memo: ' + err.message, 'error');
+      }
+    } finally {
+      setIsExportingPdf(false);
     }
   };
 
@@ -194,8 +243,27 @@ export default function DashboardScreen() {
                   </>
                 ) : (
                   <>
-                    <Download className="w-3.5 h-3.5" />
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
                     <span>Download Bank DPR (.xlsx)</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                disabled={isExportingPdf}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-[#0F2F57] hover:bg-blue-900 disabled:opacity-50 border border-blue-900 rounded-lg transition-all shadow-xs cursor-pointer"
+              >
+                {isExportingPdf ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Exporting PDF...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Download Credit Proposal (.pdf)</span>
                   </>
                 )}
               </button>

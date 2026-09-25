@@ -36,3 +36,5 @@ lerna-debug.log*
 tmp/
 temp/
 server/data/generated_*.xlsx
+server/data/generated_*.pdf
+server/data/sample_credit_appraisal.pdf

@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
-import { Download, Building2, BarChart3, Sliders, ShieldCheck, PlusCircle } from 'lucide-react';
+import { Download, Building2, BarChart3, Sliders, ShieldCheck, PlusCircle, RefreshCw, FileText } from 'lucide-react';
 import { useCreditOS } from '../context/CreditOSContext';
 
 export default function AppHeader() {
-  const { data, dprInput, showToast, resetSession } = useCreditOS();
+  const { data, dprInput, dprOutput, showToast, resetSession } = useCreditOS();
   const navigate = useNavigate();
+  const [isExporting, setIsExporting] = useState(false);
 
   const navItems = [
     { to: '/dashboard', label: 'Dashboard', icon: BarChart3 },
@@ -14,8 +15,48 @@ export default function AppHeader() {
     { to: '/recommendations', label: 'Financing Routes', icon: ShieldCheck }
   ];
 
-  const handleDownloadReport = () => {
-    showToast('Report generation initiated. Full PDF export is scheduled for Phase 4.');
+  const handleDownloadReport = async () => {
+    if (isExporting) return;
+    try {
+      setIsExporting(true);
+      if (showToast) showToast('Generating Credit Appraisal Memorandum (.pdf)...');
+      let res;
+      if (dprOutput && dprInput) {
+        res = await fetch('/api/dpr/export-pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dpr: dprOutput, normalizedData: dprInput })
+        });
+      } else {
+        res = await fetch('/api/dpr/sample-pdf');
+      }
+
+      if (!res.ok) {
+        throw new Error('Server returned an error generating the appraisal memo.');
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const rawName = (dprOutput && dprInput)
+        ? (dprInput?.entityName || data?.businessProfile?.businessName || 'MSME_Borrower')
+        : 'Shree_Enterprises';
+      const entityName = rawName.replace(/[^a-zA-Z0-9_\-\s]/g, '_').trim().replace(/\s+/g, '_');
+      a.download = `DPR_${entityName}_Credit_Appraisal_Memo.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        if (a.parentNode) a.parentNode.removeChild(a);
+      }, 1000);
+      if (showToast) showToast('Credit Appraisal Memorandum (.pdf) downloaded successfully!', 'success');
+    } catch (err) {
+      console.error('Header PDF download error:', err);
+      if (showToast) showToast(`Export failed: ${err.message}`, 'error');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const handleNewAnalysis = () => {
@@ -96,10 +137,20 @@ export default function AppHeader() {
             {/* Download Report Button */}
             <button
               onClick={handleDownloadReport}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-[#0F2F57] text-white hover:bg-blue-900 transition-colors shadow-xs cursor-pointer whitespace-nowrap"
+              disabled={isExporting}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-[#0F2F57] hover:bg-blue-900 disabled:opacity-50 text-white transition-colors shadow-xs cursor-pointer whitespace-nowrap"
             >
-              <Download className="w-3.5 h-3.5 shrink-0" />
-              <span className="whitespace-nowrap">Export Dossier</span>
+              {isExporting ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span className="whitespace-nowrap">Generating Memo...</span>
+                </>
+              ) : (
+                <>
+                  <FileText className="w-3.5 h-3.5 shrink-0" />
+                  <span className="whitespace-nowrap">Export Appraisal Memo</span>
+                </>
+              )}
             </button>
 
           </div>
