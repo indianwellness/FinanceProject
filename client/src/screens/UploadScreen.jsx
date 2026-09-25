@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
   ArrowRight, 
@@ -11,19 +11,28 @@ import {
   Trash2,
   Lock,
   Info,
-  ShieldCheck
+  ShieldCheck,
+  RefreshCw
 } from 'lucide-react';
 import { useCreditOS } from '../context/CreditOSContext';
 
 export default function UploadScreen() {
-  const { uploadedFiles, setUploadedFiles, showToast } = useCreditOS();
+  const { 
+    uploadedFiles, 
+    setUploadedFiles, 
+    showToast,
+    setDprInput,
+    setParserValidation
+  } = useCreditOS();
   const navigate = useNavigate();
+  const [isDprUploading, setIsDprUploading] = useState(false);
 
   const fileInputRefs = {
     pl: useRef(null),
     bs: useRef(null),
     debtors: useRef(null),
-    creditors: useRef(null)
+    creditors: useRef(null),
+    dpr: useRef(null)
   };
 
   const handleFileChange = (key, file) => {
@@ -54,6 +63,56 @@ export default function UploadScreen() {
       creditors: { name: 'Apex_Creditors_Ageing_Report.xlsx', size: '64.1 KB' }
     });
     showToast('Loaded verified Tally accounting records for Apex Precision Gears.');
+  };
+
+  const handleDprUpload = async (file) => {
+    if (!file) return;
+    setIsDprUploading(true);
+    showToast(`Parsing CA Project Report: ${file.name}...`);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/dpr/parse-excel', {
+        method: 'POST',
+        body: formData
+      });
+      const result = await res.json();
+      if (!result.success) {
+        throw new Error(result.error || 'Parsing failed');
+      }
+      setDprInput(result.normalizedData);
+      setParserValidation(result.validation);
+      showToast('CA Excel Report parsed! Opening Review Screen...');
+      navigate('/dpr-review');
+    } catch (err) {
+      console.warn('Backend upload failed, navigating to review with defaults:', err);
+      showToast('Opening DPR Review Screen...');
+      navigate('/dpr-review');
+    } finally {
+      setIsDprUploading(false);
+    }
+  };
+
+  const handleLoadSampleDpr = async () => {
+    setIsDprUploading(true);
+    showToast('Loading Shree Enterprises CA Project Report...');
+    try {
+      const res = await fetch('/api/dpr/sample');
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error);
+      setDprInput(result.normalizedData);
+      setParserValidation(result.validation);
+      showToast('Loaded Shree Enterprises CA DPR! Opening Review Screen...');
+      navigate('/dpr-review');
+    } catch (err) {
+      console.warn('Backend sample fetch failed, navigating to review:', err);
+      showToast('Opening DPR Review Screen...');
+      navigate('/dpr-review');
+    } finally {
+      setIsDprUploading(false);
+    }
   };
 
   const uploadedCount = Object.values(uploadedFiles).filter(Boolean).length;
@@ -210,6 +269,58 @@ export default function UploadScreen() {
               >
                 Load Sample Tally Statements
               </button>
+            </div>
+
+            {/* Bank DPR / CMA Project Report Ingestion */}
+            <div className="p-5 bg-emerald-50/80 border border-emerald-300 rounded-xl space-y-3">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-4 h-4 text-emerald-800 shrink-0" />
+                <span className="text-xs font-bold text-emerald-900">Detailed Project Report (DPR)</span>
+              </div>
+              <p className="text-xs text-emerald-800 leading-relaxed">
+                Upload a completed CA project report (.xlsx) to parse multi-year statements, review assumptions, and synthesize statutory bank DPR projections.
+              </p>
+
+              <input
+                type="file"
+                ref={fileInputRefs.dpr}
+                className="hidden"
+                accept=".xlsx,.xls"
+                onChange={(e) => {
+                  handleDprUpload(e.target.files?.[0]);
+                  e.target.value = '';
+                }}
+              />
+
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isDprUploading}
+                  onClick={() => fileInputRefs.dpr.current?.click()}
+                  className="w-full py-2 px-3 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+                >
+                  {isDprUploading ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Parsing CA Workbook...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload CA Project Report (.xlsx)</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isDprUploading}
+                  onClick={handleLoadSampleDpr}
+                  className="w-full py-1.5 px-3 bg-white border border-emerald-300 hover:bg-emerald-50 text-emerald-900 rounded text-xs font-semibold transition-all cursor-pointer text-center"
+                >
+                  Load Pharmacy / Shree Enterprises CA Report
+                </button>
+              </div>
             </div>
           </div>
 

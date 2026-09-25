@@ -9,8 +9,16 @@ export function CreditOSProvider({ children }) {
     pl: null,
     bs: null,
     debtors: null,
-    creditors: null
+    creditors: null,
+    dprExcel: null
   });
+
+  // DPR State
+  const [dprInput, setDprInput] = useState(null);
+  const [dprOutput, setDprOutput] = useState(null);
+  const [parserValidation, setParserValidation] = useState(null);
+  const [isDprGenerating, setIsDprGenerating] = useState(false);
+
   const [toastMessage, setToastMessage] = useState(null);
   const toastTimeoutRef = useRef(null);
 
@@ -50,8 +58,12 @@ export function CreditOSProvider({ children }) {
       pl: null,
       bs: null,
       debtors: null,
-      creditors: null
+      creditors: null,
+      dprExcel: null
     });
+    setDprInput(null);
+    setDprOutput(null);
+    setParserValidation(null);
     showToast('Session reset. Ready for new business assessment.');
   };
 
@@ -61,7 +73,8 @@ export function CreditOSProvider({ children }) {
       pl: { name: 'Apex_PL_Statement_FY25-26.xml', size: '142.4 KB' },
       bs: { name: 'Apex_Balance_Sheet_FY25-26.xml', size: '186.2 KB' },
       debtors: { name: 'Apex_Debtors_Ageing_Report.xlsx', size: '88.6 KB' },
-      creditors: { name: 'Apex_Creditors_Ageing_Report.xlsx', size: '64.1 KB' }
+      creditors: { name: 'Apex_Creditors_Ageing_Report.xlsx', size: '64.1 KB' },
+      dprExcel: null
     });
   };
 
@@ -74,7 +87,17 @@ export function CreditOSProvider({ children }) {
     resetSession,
     loadDemoData,
     toastMessage,
-    showToast
+    showToast,
+
+    // DPR Engine State & Setters
+    dprInput,
+    setDprInput,
+    dprOutput,
+    setDprOutput,
+    parserValidation,
+    setParserValidation,
+    isDprGenerating,
+    setIsDprGenerating
   };
 
   return (

@@ -1,8 +1,21 @@
 import express from 'express';
 import cors from 'cors';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { parseDprExcelWorkbook } from './src/parser/excelParser.js';
+import { validateAndNormalizeConvergenceData } from './src/parser/convergenceSchema.js';
+import { generateDprProjections } from './src/engine/dprEngine.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Configure in-memory file uploads with 20MB limit
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024 } // 20 MB max
+});
 
 // Dynamic CORS configuration supporting local dev, Vercel deployments, and custom domains
 const allowedOrigins = [
@@ -13,44 +26,164 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow non-browser requests (e.g. server-to-server, health checks, curl)
     if (!origin) return callback(null, true);
-    
-    // Allow configured origins and any Vercel preview/production deployments
     const isAllowed = allowedOrigins.includes(origin) || 
       origin.endsWith('.vercel.app') ||
       origin.startsWith('http://localhost:');
 
-    if (isAllowed) {
-      return callback(null, true);
-    }
-    
-    // In production, log warning but permit or restrict as desired
+    if (isAllowed) return callback(null, true);
     return callback(null, true);
   },
   credentials: true
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
-// Comprehensive health check endpoint (Render uses this for zero-downtime monitoring)
+// Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     service: 'MSME CreditOS Engine API', 
-    version: '0.1.0',
+    version: '0.2.0',
     uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development'
   });
 });
 
-// Bind to 0.0.0.0 for cloud container compatibility (Render, Docker)
+// -------------------------------------------------------------
+// DPR ENGINE API ENDPOINTS (Phase 2 & Phase 3)
+// -------------------------------------------------------------
+
+/**
+ * POST /api/dpr/parse-excel
+ * Accepts a multipart/form-data upload with an Excel file (.xlsx, .xls)
+ * Runs Phase 2 Excel Parser and returns extracted and normalized data.
+ */
+app.post('/api/dpr/parse-excel', upload.single('file'), (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({
+        success: false,
+        error: 'No Excel file uploaded. Please attach a valid .xlsx or .xls file.'
+      });
+    }
+
+    const parseResult = parseDprExcelWorkbook(req.file.buffer);
+
+    if (!parseResult || !parseResult.validation || !parseResult.validation.isValid) {
+      return res.status(422).json({
+        success: false,
+        fileName: req.file.originalname,
+        error: parseResult?.validation?.errors?.[0] || 'Failed to extract valid financial statements from uploaded workbook.',
+        validation: parseResult?.validation
+      });
+    }
+
+    return res.json({
+      success: true,
+      fileName: req.file.originalname,
+      rawExtracted: parseResult.rawExtracted,
+      normalizedData: parseResult.normalizedData,
+      validation: parseResult.validation
+    });
+  } catch (err) {
+    console.error('Error parsing uploaded Excel:', err);
+    return res.status(500).json({
+      success: false,
+      error: `Server parsing error: ${err.message}`
+    });
+  }
+});
+
+/**
+ * GET /api/dpr/sample
+ * Parses Sir's actual CA project report file on disk and returns its normalized review data
+ * Enables instant one-click testing of real-world CA data.
+ */
+app.get('/api/dpr/sample', (req, res) => {
+  try {
+    const candidatePaths = [
+      'C:\\Users\\Nitro 5\\Downloads\\Final Project Report 25-04-23 - Email.xlsx',
+      path.resolve('../Final Project Report 25-04-23 - Email.xlsx'),
+      path.resolve('Final Project Report 25-04-23 - Email.xlsx')
+    ];
+
+    const targetPath = candidatePaths.find(p => fs.existsSync(p));
+    if (!targetPath) {
+      return res.status(404).json({
+        success: false,
+        error: 'Sample CA report file not found on server.'
+      });
+    }
+
+    const parseResult = parseDprExcelWorkbook(targetPath);
+    return res.json({
+      success: true,
+      fileName: 'Final Project Report 25-04-23 - Email.xlsx',
+      rawExtracted: parseResult.rawExtracted,
+      normalizedData: parseResult.normalizedData,
+      validation: parseResult.validation
+    });
+  } catch (err) {
+    console.error('Error loading sample DPR:', err);
+    return res.status(500).json({
+      success: false,
+      error: `Failed to load sample DPR: ${err.message}`
+    });
+  }
+});
+
+/**
+ * POST /api/dpr/generate
+ * Accepts confirmed data object from Review Screen, executes Phase 1 Math Engine,
+ * and returns full multi-year DPR projections.
+ */
+app.post('/api/dpr/generate', (req, res) => {
+  try {
+    const candidateData = req.body;
+    if (!candidateData || typeof candidateData !== 'object') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid request body. Expected normalized financial data object.'
+      });
+    }
+
+    // Run convergence schema validation and guardrails
+    const validation = validateAndNormalizeConvergenceData(candidateData);
+
+    if (!validation.isValid) {
+      return res.status(422).json({
+        success: false,
+        errors: validation.errors,
+        warnings: validation.warnings
+      });
+    }
+
+    // Execute Phase 1 Math Engine
+    const dprProjections = generateDprProjections(validation.normalizedData);
+
+    return res.json({
+      success: true,
+      dpr: dprProjections,
+      normalizedData: validation.normalizedData,
+      warnings: validation.warnings,
+      confidenceScore: validation.confidenceScore
+    });
+  } catch (err) {
+    console.error('Error generating DPR projections:', err);
+    return res.status(500).json({
+      success: false,
+      error: `Engine execution failure: ${err.message}`
+    });
+  }
+});
+
+// Bind to 0.0.0.0 for cloud container compatibility
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`MSME CreditOS server listening on port ${PORT}`);
 });
 
-// Graceful shutdown handling for cloud restarts
 process.on('SIGTERM', () => {
   console.log('SIGTERM received: shutting down HTTP server gracefully');
   server.close(() => {

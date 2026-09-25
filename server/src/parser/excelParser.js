@@ -92,6 +92,23 @@ function findRowByKeywords(rows, keywords = []) {
 }
 
 /**
+ * Finds a row by matching keywords, prioritizing rows with a non-zero numeric value at colIdx.
+ * Prevents empty section header rows (e.g. "Less: Operating Expenses") from masking line item amounts.
+ */
+function findRowWithNumericValue(rows, keywords = [], colIdx = 1) {
+  if (!rows || !Array.isArray(rows)) return null;
+  for (const row of rows) {
+    if (rowHasKeywords(row, keywords)) {
+      const val = parseNumberCell(row[colIdx]);
+      if (val !== 0) {
+        return row;
+      }
+    }
+  }
+  return findRowByKeywords(rows, keywords);
+}
+
+/**
  * Detects unit scale from header texts or numerical magnitude.
  * E.g. "(₹ in Lakhs)", "(Rs. in Lacs)", "(in Crores)" or low numeric turnover.
  */
@@ -324,27 +341,27 @@ export function parseDprExcelWorkbook(input, options = {}) {
       }
 
       // --- P&L EXTRACTION ---
-      const turnoverRow = findRowByKeywords(pnlRows, ['sale of', 'turnover', 'gross sales', 'revenue from']);
+      const turnoverRow = findRowWithNumericValue(pnlRows, ['sale of', 'turnover', 'gross sales', 'revenue from'], baselineColIdx);
       if (turnoverRow) {
         rawExtracted.netTurnover = parseNumberCell(turnoverRow[baselineColIdx]);
       }
 
-      const purchasesRow = findRowByKeywords(pnlRows, ['purchases of goods', 'purchases']);
-      const labourRow = findRowByKeywords(pnlRows, ['labour charges', 'direct wages', 'direct expenses']);
+      const purchasesRow = findRowWithNumericValue(pnlRows, ['purchases of goods', 'purchases'], baselineColIdx);
+      const labourRow = findRowWithNumericValue(pnlRows, ['labour charges', 'direct wages', 'direct expenses'], baselineColIdx);
       if (purchasesRow) {
         const purch = parseNumberCell(purchasesRow[baselineColIdx]);
         const labour = labourRow ? parseNumberCell(labourRow[baselineColIdx]) : 0;
         rawExtracted.cogs = purch + labour;
       }
 
-      const gpRow = findRowByKeywords(pnlRows, ['gross profit']);
+      const gpRow = findRowWithNumericValue(pnlRows, ['gross profit'], baselineColIdx);
       if (gpRow) {
         rawExtracted.grossProfit = parseNumberCell(gpRow[baselineColIdx]);
       } else if (rawExtracted.netTurnover > 0 && rawExtracted.cogs > 0) {
         rawExtracted.grossProfit = rawExtracted.netTurnover - rawExtracted.cogs;
       }
 
-      const opexRow = findRowByKeywords(pnlRows, ['administration selling', 'operating expenses', 'total operating']);
+      const opexRow = findRowWithNumericValue(pnlRows, ['administration selling', 'operating expenses', 'total operating', 'administrative'], baselineColIdx);
       if (opexRow) {
         rawExtracted.opex = parseNumberCell(opexRow[baselineColIdx]);
       }
@@ -357,44 +374,44 @@ export function parseDprExcelWorkbook(input, options = {}) {
       }
 
       // --- BALANCE SHEET EXTRACTION ---
-      const capitalRow = findRowByKeywords(bsRows, ['capital account', 'proprietor capital', 'share capital']);
+      const capitalRow = findRowWithNumericValue(bsRows, ['capital account', 'proprietor capital', 'share capital'], baselineColIdx);
       if (capitalRow) {
         rawExtracted.capital = parseNumberCell(capitalRow[baselineColIdx]);
       }
 
-      const tlRow = findRowByKeywords(bsRows, ['bank term loan', 'term loan']);
+      const tlRow = findRowWithNumericValue(bsRows, ['bank term loan', 'term loan'], baselineColIdx);
       if (tlRow) {
         const tl = parseNumberCell(tlRow[baselineColIdx]);
         if (tl > 0 && rawExtracted.loanAmount === 0) rawExtracted.loanAmount = tl;
       }
 
-      const faRow = findRowByKeywords(bsRows, ['fixed assets', 'net fixed assets', 'net block']);
+      const faRow = findRowWithNumericValue(bsRows, ['fixed assets', 'net fixed assets', 'net block'], baselineColIdx);
       if (faRow) {
         const netFa = parseNumberCell(faRow[baselineColIdx]);
         if (netFa > 0) rawExtracted.fixedAssets.general = netFa;
       }
 
-      const debtorsRow = findRowByKeywords(bsRows, ['debtors', 'sundry debtors', 'trade receivables']);
+      const debtorsRow = findRowWithNumericValue(bsRows, ['debtors', 'sundry debtors', 'trade receivables'], baselineColIdx);
       if (debtorsRow) {
         rawExtracted.tradeDebtors = parseNumberCell(debtorsRow[baselineColIdx]);
       }
 
-      const stockRow = findRowByKeywords(bsRows, ['stock finished', 'stock in trade', 'inventories', 'closing stock']);
+      const stockRow = findRowWithNumericValue(bsRows, ['stock finished', 'stock in trade', 'inventories', 'closing stock'], baselineColIdx);
       if (stockRow) {
         rawExtracted.inventories = parseNumberCell(stockRow[baselineColIdx]);
       }
 
-      const cashRow = findRowByKeywords(bsRows, ['cash bank', 'cash and bank', 'bank balance']);
+      const cashRow = findRowWithNumericValue(bsRows, ['cash bank', 'cash and bank', 'bank balance'], baselineColIdx);
       if (cashRow) {
         rawExtracted.cashBank = parseNumberCell(cashRow[baselineColIdx]);
       }
 
-      const otherAssetsRow = findRowByKeywords(bsRows, ['other current assets', 'loans advances']);
+      const otherAssetsRow = findRowWithNumericValue(bsRows, ['other current assets', 'loans advances'], baselineColIdx);
       if (otherAssetsRow) {
         rawExtracted.loansAdvancesCurrent = parseNumberCell(otherAssetsRow[baselineColIdx]);
       }
 
-      const creditorsRow = findRowByKeywords(bsRows, ['sundry creditors', 'trade creditors']);
+      const creditorsRow = findRowWithNumericValue(bsRows, ['sundry creditors', 'trade creditors'], baselineColIdx);
       if (creditorsRow) {
         rawExtracted.tradeCreditors = parseNumberCell(creditorsRow[baselineColIdx]);
       }

@@ -7,6 +7,7 @@ import LandingScreen from './screens/LandingScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import UploadScreen from './screens/UploadScreen';
 import ProcessingScreen from './screens/ProcessingScreen';
+import DprReviewScreen from './screens/DprReviewScreen';
 import DashboardScreen from './screens/DashboardScreen';
 import DetailsScreen from './screens/DetailsScreen';
 import RecommendationsScreen from './screens/RecommendationsScreen';
@@ -50,6 +51,7 @@ export default function App() {
           <Route path="/profile" element={<ProfileScreen />} />
           <Route path="/upload" element={<UploadScreen />} />
           <Route path="/processing" element={<ProcessingScreen />} />
+          <Route path="/dpr-review" element={<DprReviewScreen />} />
 
           {/* Underwriting & Analysis Routes (with AppHeader & Footer) */}
           <Route
