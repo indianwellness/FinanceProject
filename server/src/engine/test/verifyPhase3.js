@@ -48,12 +48,15 @@ async function runPhase3Tests() {
 
   console.log('\nTEST SUITE 2: End-to-End Integration Contract (Review -> Engine)');
 
-  // 1. Simulate parser output for Shree Enterprises
-  const sampleFilePath = 'C:\\Users\\Nitro 5\\Downloads\\Final Project Report 25-04-23 - Email.xlsx';
+  // 1. Simulate parser output using portable server/data/sample_cma.xlsx
+  const portableSamplePath = path.resolve('server/data/sample_cma.xlsx');
   let sampleParsed = null;
-  if (fs.existsSync(sampleFilePath)) {
-    sampleParsed = parseDprExcelWorkbook(sampleFilePath);
-    assert(sampleParsed.validation.isValid === true, 'Sample CA workbook parsed cleanly');
+  if (fs.existsSync(portableSamplePath)) {
+    sampleParsed = parseDprExcelWorkbook(portableSamplePath);
+    assert(sampleParsed.validation.isValid === true, 'Portable CA workbook parsed cleanly from server/data/sample_cma.xlsx');
+    assert(sampleParsed.normalizedData.netTurnover > 0, `Extracted baseline turnover: ₹${(sampleParsed.normalizedData.netTurnover / 100000).toFixed(2)} Lakhs`);
+  } else {
+    assert(false, 'Portable CA workbook found at server/data/sample_cma.xlsx');
   }
 
   // 2. Simulate User Modifying Assumptions in Review Screen
@@ -100,23 +103,72 @@ async function runPhase3Tests() {
   });
   assert(allBalanced, 'All 5 projected years have zero balance sheet discrepancy (Sources == Applications)');
 
-  // 5. Verification of Quasi-Equity Net Worth Impact
-  const y1NetWorth = dprResult.projectedBalanceSheet[0].sourcesOfFunds.totalNetWorth;
-  assert(y1NetWorth > 0, `Year 1 Net Worth calculated with quasi-equity support: ₹${(y1NetWorth / 100000).toFixed(2)} Lakhs`);
+  // 5. Verification of Quasi-Equity Net Worth & TOL/ATNW Impact (RBI Norm)
+  const y1Bs = dprResult.projectedBalanceSheet[0];
+  const y1NetWorth = y1Bs.sourcesOfFunds.totalNetWorth;
+  const y1Atnw = y1Bs.sourcesOfFunds.adjustedTangibleNetWorth;
+  assert(y1NetWorth > 0, `Year 1 Net Worth calculated: ₹${(y1NetWorth / 100000).toFixed(2)} Lakhs`);
+  assert(
+    Math.abs(y1Atnw - (y1NetWorth + 500000)) < 1,
+    `Adjusted Tangible Net Worth (ATNW) incorporates ₹5L Quasi-Equity: ₹${(y1Atnw / 100000).toFixed(2)} Lakhs`
+  );
+
+  // Compare with zero quasi-equity run to verify TOL/ATNW reduction
+  const zeroQuasiData = { ...validation.normalizedData, unsecuredLoansQuasiEquity: 0, unsecuredLoansExternal: 700000 };
+  const zeroQuasiDpr = generateDprProjections(zeroQuasiData);
+  const ratioWithQuasi = dprResult.solvencyRatios.annualRatios[0].tolAtnw;
+  const ratioWithoutQuasi = zeroQuasiDpr.solvencyRatios.annualRatios[0].tolAtnw;
+  assert(
+    ratioWithQuasi < ratioWithoutQuasi,
+    `TOL/ATNW ratio improves under Quasi-Equity treatment (${ratioWithQuasi.toFixed(2)} vs ${ratioWithoutQuasi.toFixed(2)} without quasi-equity)`
+  );
 
   // 6. Solvency & DSCR Compliance Rating
   assert(dprResult.solvencyRatios.summary.overallRating !== undefined, `Overall Solvency Rating assigned: ${dprResult.solvencyRatios.summary.overallRating}`);
   assert(dprResult.solvencyRatios.cgtmseEligibility.isEligible === true, 'CGTMSE guarantee eligibility correctly flagged (₹35L loan <= ₹10 Cr ceiling)');
 
+  // 7. Entity Type Tax Branching Verification (Proprietorship vs Private Limited)
+  const pvtLtdData = { ...validation.normalizedData, entityType: 'private_limited' };
+  const pvtLtdDpr = generateDprProjections(pvtLtdData);
+  assert(pvtLtdDpr.projectedPnl[0].taxProvision !== undefined, 'Private limited entity tax provision calculated');
+  assert(pvtLtdDpr.projectedBalanceSheet[0].integrityCheck.isBalanced === true, 'Private limited projection balance sheet balances to 0');
+
   console.log('\nTEST SUITE 3: Review Screen Guardrail Rejection & Error Prevention');
 
   // Guardrail 1: Zero turnover must be blocked
-  const invalidData = { ...userConfirmedData, netTurnover: 0 };
-  const invalidVal = validateAndNormalizeConvergenceData(invalidData);
-  assert(invalidVal.isValid === false, 'Zero turnover is strictly rejected from DPR generation');
-  assert(invalidVal.errors.length > 0, 'Error message explicitly explains turnover requirement');
+  const zeroTurnoverData = { ...userConfirmedData, netTurnover: 0 };
+  const zeroTurnoverVal = validateAndNormalizeConvergenceData(zeroTurnoverData);
+  assert(zeroTurnoverVal.isValid === false, 'Zero turnover is strictly rejected (isValid === false)');
+  assert(zeroTurnoverVal.confidenceScore === 0.0, 'Zero turnover drops confidenceScore to 0.0');
+  assert(zeroTurnoverVal.errors.some(e => e.includes('Turnover must be greater than zero')), 'Turnover error explicitly logged');
 
-  // Guardrail 2: Extreme assumptions trigger institutional warnings
+  // Guardrail 2: Negative interest rate must be blocked
+  const negInterestData = { ...userConfirmedData, interestRate: -5.0 };
+  const negInterestVal = validateAndNormalizeConvergenceData(negInterestData);
+  assert(negInterestVal.isValid === false, 'Negative interest rate (-5%) strictly rejected');
+  assert(negInterestVal.confidenceScore === 0.0, 'Negative interest drops confidenceScore to 0.0');
+  assert(negInterestVal.errors.some(e => e.includes('must be a valid positive rate')), 'Negative interest error logged');
+
+  // Guardrail 3: Negative tenure must be blocked
+  const negTenureData = { ...userConfirmedData, tenureMonths: -24 };
+  const negTenureVal = validateAndNormalizeConvergenceData(negTenureData);
+  assert(negTenureVal.isValid === false, 'Negative tenure (-24 months) strictly rejected');
+  assert(negTenureVal.confidenceScore === 0.0, 'Negative tenure drops confidenceScore to 0.0');
+
+  // Guardrail 4: Negative capital must be blocked
+  const negCapitalData = { ...userConfirmedData, capital: -200000 };
+  const negCapitalVal = validateAndNormalizeConvergenceData(negCapitalData);
+  assert(negCapitalVal.isValid === false, 'Negative capital (-₹2L) strictly rejected');
+  assert(negCapitalVal.confidenceScore === 0.0, 'Negative capital drops confidenceScore to 0.0');
+
+  // Guardrail 5: Negative revenue growth must be blocked
+  const negGrowthData = { ...userConfirmedData, revenueGrowthPct: -10.0 };
+  const negGrowthVal = validateAndNormalizeConvergenceData(negGrowthData);
+  assert(negGrowthVal.isValid === false, 'Negative revenue growth (-10%) strictly rejected');
+  assert(negGrowthVal.confidenceScore === 0.0, 'Negative revenue growth drops confidenceScore to 0.0');
+  assert(negGrowthVal.errors.some(e => e.includes('cannot be negative')), 'Negative revenue growth error logged');
+
+  // Guardrail 6: Extreme assumptions trigger institutional warnings
   const extremeData = { ...userConfirmedData, revenueGrowthPct: 32.0, opexGrowthPct: 22.0 };
   const extremeVal = validateAndNormalizeConvergenceData(extremeData);
   assert(extremeVal.warnings.some(w => w.includes('High revenue growth')), 'Warning raised for revenue growth > 20%');

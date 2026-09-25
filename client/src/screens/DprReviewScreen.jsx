@@ -14,7 +14,8 @@ import {
   Percent,
   Calendar,
   FileSpreadsheet,
-  Info
+  Info,
+  XCircle
 } from 'lucide-react';
 import { useCreditOS } from '../context/CreditOSContext';
 
@@ -70,74 +71,122 @@ export default function DprReviewScreen() {
     };
   });
 
-  // Track live validation warnings as user alters inputs
+  // Track live validation warnings and fatal submission errors
   const [liveWarnings, setLiveWarnings] = useState([]);
+  const [submissionError, setSubmissionError] = useState(null);
 
   useEffect(() => {
     const warnings = [];
-    if (formData.revenueGrowthPct > 20) {
-      warnings.push(`High Revenue Growth (${formData.revenueGrowthPct}%) — Indian banks typically scrutinize projections exceeding 20% p.a.`);
+    const revGrowth = Number(formData.revenueGrowthPct) || 0;
+    const rate = Number(formData.interestRate) || 0;
+    const tenure = Number(formData.tenureMonths) || 0;
+    const opexGrowth = Number(formData.opexGrowthPct) || 0;
+
+    if (revGrowth > 20) {
+      warnings.push(`High Revenue Growth (${revGrowth}%) — Indian banks typically scrutinize projections exceeding 20% p.a.`);
     }
-    if (formData.revenueGrowthPct > 35) {
-      warnings.push(`Extreme Revenue Growth (${formData.revenueGrowthPct}%) exceeds RBI acceptable expansion caps.`);
+    if (revGrowth > 35) {
+      warnings.push(`Extreme Revenue Growth (${revGrowth}%) exceeds RBI acceptable expansion caps.`);
     }
-    if (formData.interestRate > 16) {
-      warnings.push(`Interest Rate (${formData.interestRate}%) is above typical MSME commercial lending rates.`);
+    if (rate > 16) {
+      warnings.push(`Interest Rate (${rate}%) is above typical MSME commercial lending rates.`);
     }
-    if (formData.tenureMonths > 120) {
-      warnings.push(`Tenure of ${formData.tenureMonths} months exceeds typical 10-year term loan norms.`);
+    if (tenure > 120) {
+      warnings.push(`Tenure of ${tenure} months exceeds typical 10-year term loan norms.`);
     }
-    if (formData.opexGrowthPct > 15) {
-      warnings.push(`High OpEx Growth (${formData.opexGrowthPct}%) may erode projected DSCR.`);
+    if (opexGrowth > 15) {
+      warnings.push(`High OpEx Growth (${opexGrowth}%) may erode projected DSCR.`);
     }
     setLiveWarnings(warnings);
   }, [formData]);
 
-  const handleInputChange = (field, value) => {
+  const handleInputChange = (field, rawValue) => {
+    // Allows empty string so user can backspace freely without jumping to 0 or NaN
+    const val = rawValue === '' ? '' : rawValue;
     setFormData(prev => ({
       ...prev,
-      [field]: value
+      [field]: val
     }));
+    if (submissionError) setSubmissionError(null);
   };
 
-  const handleNestedChange = (parent, field, value) => {
+  const handleNestedChange = (parent, field, rawValue) => {
+    const val = rawValue === '' ? '' : rawValue;
     setFormData(prev => ({
       ...prev,
       [parent]: {
         ...prev[parent],
-        [field]: value
+        [field]: val
       }
     }));
+    if (submissionError) setSubmissionError(null);
+  };
+
+  const handleBackToUpload = () => {
+    // Preserve current draft in context before navigating
+    setDprInput(formData);
+    navigate('/upload');
   };
 
   const handleGenerateDpr = async () => {
+    if (isDprGenerating) return;
     setIsDprGenerating(true);
+    setSubmissionError(null);
     showToast('Executing DPR Financial Synthesis Engine...');
 
     try {
-      // Send to server API
+      // Clean and sanitize numeric inputs to safe numbers
+      const sanitizedPayload = {
+        ...formData,
+        loanAmount: Number(formData.loanAmount) || 0,
+        ccAppliedFor: Number(formData.ccAppliedFor) || 0,
+        interestRate: Number(formData.interestRate) || 0,
+        tenureMonths: Number(formData.tenureMonths) || 0,
+        moratoriumMonths: Number(formData.moratoriumMonths) || 0,
+        netTurnover: Number(formData.netTurnover) || 0,
+        cogs: Number(formData.cogs) || 0,
+        grossProfit: Number(formData.grossProfit) || 0,
+        capital: Number(formData.capital) || 0,
+        tradeDebtors: Number(formData.tradeDebtors) || 0,
+        inventories: Number(formData.inventories) || 0,
+        tradeCreditors: Number(formData.tradeCreditors) || 0,
+        unsecuredLoansQuasiEquity: Number(formData.unsecuredLoansQuasiEquity) || 0,
+        unsecuredLoansExternal: Number(formData.unsecuredLoansExternal) || 0,
+        revenueGrowthPct: Number(formData.revenueGrowthPct) || 0,
+        gpMarginPct: Number(formData.gpMarginPct) || 0,
+        opexGrowthPct: Number(formData.opexGrowthPct) || 0,
+        debtorDays: Number(formData.debtorDays) || 0,
+        inventoryDays: Number(formData.inventoryDays) || 0,
+        creditorDays: Number(formData.creditorDays) || 0,
+        opex: {
+          total: Number(formData.opex?.total) || 0
+        }
+      };
+
       const res = await fetch('/api/dpr/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(sanitizedPayload)
       });
 
       const result = await res.json();
 
-      if (!result.success) {
-        throw new Error(result.errors?.[0] || result.error || 'Failed to generate DPR projections.');
+      if (!res.ok || !result.success) {
+        const errorMsg = result.errors?.[0] || result.error || 'Failed to generate DPR projections.';
+        setSubmissionError(errorMsg);
+        showToast(`Synthesis Blocked: ${errorMsg}`);
+        return; // Retain user on page so they can address issues
       }
 
-      setDprInput(result.normalizedData || formData);
+      setDprInput(result.normalizedData || sanitizedPayload);
       setDprOutput(result.dpr);
       showToast('DPR Projections and Schedules successfully generated!');
       navigate('/dashboard');
     } catch (err) {
-      console.warn('Backend API request failed, falling back to local client execution:', err);
-      // Fallback: Save input and proceed to dashboard
-      setDprInput(formData);
-      showToast('DPR data confirmed. Viewing credit assessment cockpit.');
-      navigate('/dashboard');
+      console.error('API request error:', err);
+      const errMsg = err.message || 'Unable to connect to calculation engine.';
+      setSubmissionError(errMsg);
+      showToast(`Network Error: ${errMsg}`);
     } finally {
       setIsDprGenerating(false);
     }
@@ -168,7 +217,7 @@ export default function DprReviewScreen() {
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => navigate('/upload')}
+              onClick={handleBackToUpload}
               className="text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer flex items-center gap-1"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
@@ -216,6 +265,19 @@ export default function DprReviewScreen() {
             </div>
           </div>
         </div>
+
+        {/* Fatal Submission Error Alert */}
+        {submissionError && (
+          <div className="bg-rose-50 border border-rose-300 rounded-xl p-4 text-xs space-y-1 text-rose-900 shadow-xs">
+            <div className="flex items-center gap-2 font-bold text-rose-700">
+              <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>DPR Generation Blocked</span>
+            </div>
+            <p className="text-rose-800 pl-6 font-medium">
+              {submissionError}
+            </p>
+          </div>
+        )}
 
         {/* Audit & Warnings Alerts */}
         {(liveWarnings.length > 0 || (parserValidation?.warnings?.length > 0)) && (
@@ -286,12 +348,12 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.loanAmount}
-                    onChange={(e) => handleInputChange('loanAmount', Number(e.target.value))}
+                    value={formData.loanAmount ?? ''}
+                    onChange={(e) => handleInputChange('loanAmount', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono font-semibold border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                   <span className="text-[10px] text-slate-500">
-                    ₹{(formData.loanAmount / 100000).toFixed(2)} Lakhs
+                    ₹{((Number(formData.loanAmount) || 0) / 100000).toFixed(2)} Lakhs
                   </span>
                 </div>
 
@@ -301,12 +363,12 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.ccAppliedFor}
-                    onChange={(e) => handleInputChange('ccAppliedFor', Number(e.target.value))}
+                    value={formData.ccAppliedFor ?? ''}
+                    onChange={(e) => handleInputChange('ccAppliedFor', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono font-semibold border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                   <span className="text-[10px] text-slate-500">
-                    ₹{(formData.ccAppliedFor / 100000).toFixed(2)} Lakhs
+                    ₹{((Number(formData.ccAppliedFor) || 0) / 100000).toFixed(2)} Lakhs
                   </span>
                 </div>
 
@@ -317,8 +379,8 @@ export default function DprReviewScreen() {
                   <input
                     type="number"
                     step="0.1"
-                    value={formData.interestRate}
-                    onChange={(e) => handleInputChange('interestRate', Number(e.target.value))}
+                    value={formData.interestRate ?? ''}
+                    onChange={(e) => handleInputChange('interestRate', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono font-semibold border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                   <span className="text-[10px] text-slate-500">Reducing balance rate</span>
@@ -332,12 +394,12 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.tenureMonths}
-                    onChange={(e) => handleInputChange('tenureMonths', Number(e.target.value))}
+                    value={formData.tenureMonths ?? ''}
+                    onChange={(e) => handleInputChange('tenureMonths', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                   <span className="text-[10px] text-slate-500">
-                    {(formData.tenureMonths / 12).toFixed(1)} Years Amortization
+                    {((Number(formData.tenureMonths) || 0) / 12).toFixed(1)} Years Amortization
                   </span>
                 </div>
 
@@ -347,8 +409,8 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.moratoriumMonths}
-                    onChange={(e) => handleInputChange('moratoriumMonths', Number(e.target.value))}
+                    value={formData.moratoriumMonths ?? ''}
+                    onChange={(e) => handleInputChange('moratoriumMonths', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                   <span className="text-[10px] text-slate-500">Interest serviced monthly</span>
@@ -370,12 +432,12 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.netTurnover}
-                    onChange={(e) => handleInputChange('netTurnover', Number(e.target.value))}
+                    value={formData.netTurnover ?? ''}
+                    onChange={(e) => handleInputChange('netTurnover', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono font-semibold border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                   <span className="text-[10px] text-slate-500">
-                    ₹{(formData.netTurnover / 100000).toFixed(2)} Lakhs
+                    ₹{((Number(formData.netTurnover) || 0) / 100000).toFixed(2)} Lakhs
                   </span>
                 </div>
 
@@ -385,12 +447,12 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.cogs}
-                    onChange={(e) => handleInputChange('cogs', Number(e.target.value))}
+                    value={formData.cogs ?? ''}
+                    onChange={(e) => handleInputChange('cogs', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono font-semibold border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                   <span className="text-[10px] text-slate-500">
-                    ₹{(formData.cogs / 100000).toFixed(2)} Lakhs
+                    ₹{((Number(formData.cogs) || 0) / 100000).toFixed(2)} Lakhs
                   </span>
                 </div>
               </div>
@@ -402,8 +464,8 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.grossProfit}
-                    onChange={(e) => handleInputChange('grossProfit', Number(e.target.value))}
+                    value={formData.grossProfit ?? ''}
+                    onChange={(e) => handleInputChange('grossProfit', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                 </div>
@@ -414,8 +476,8 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.opex?.total || 0}
-                    onChange={(e) => handleNestedChange('opex', 'total', Number(e.target.value))}
+                    value={formData.opex?.total ?? ''}
+                    onChange={(e) => handleNestedChange('opex', 'total', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                 </div>
@@ -426,8 +488,8 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.capital}
-                    onChange={(e) => handleInputChange('capital', Number(e.target.value))}
+                    value={formData.capital ?? ''}
+                    onChange={(e) => handleInputChange('capital', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                 </div>
@@ -441,8 +503,8 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.tradeDebtors}
-                    onChange={(e) => handleInputChange('tradeDebtors', Number(e.target.value))}
+                    value={formData.tradeDebtors ?? ''}
+                    onChange={(e) => handleInputChange('tradeDebtors', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                 </div>
@@ -453,8 +515,8 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.inventories}
-                    onChange={(e) => handleInputChange('inventories', Number(e.target.value))}
+                    value={formData.inventories ?? ''}
+                    onChange={(e) => handleInputChange('inventories', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                 </div>
@@ -465,8 +527,8 @@ export default function DprReviewScreen() {
                   </label>
                   <input
                     type="number"
-                    value={formData.tradeCreditors}
-                    onChange={(e) => handleInputChange('tradeCreditors', Number(e.target.value))}
+                    value={formData.tradeCreditors ?? ''}
+                    onChange={(e) => handleInputChange('tradeCreditors', e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:border-[#0F2F57]"
                   />
                 </div>
@@ -481,15 +543,15 @@ export default function DprReviewScreen() {
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Promoter loans subordinated to the bank count as <strong>Quasi-Equity</strong> (boosting Net Worth and DSCR). Third-party loans count as external debt.
+                  Promoter loans subordinated to the bank count as <strong>Quasi-Equity</strong> (boosting Net Worth and reducing TOL/TNW). Third-party loans count as external debt.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                   <div>
                     <span className="text-[11px] font-semibold text-slate-700">Quasi-Equity Loans (₹)</span>
                     <input
                       type="number"
-                      value={formData.unsecuredLoansQuasiEquity || 0}
-                      onChange={(e) => handleInputChange('unsecuredLoansQuasiEquity', Number(e.target.value))}
+                      value={formData.unsecuredLoansQuasiEquity ?? ''}
+                      onChange={(e) => handleInputChange('unsecuredLoansQuasiEquity', e.target.value)}
                       className="w-full mt-1 px-3 py-1.5 text-xs font-mono border border-slate-300 rounded bg-white"
                       placeholder="0"
                     />
@@ -498,8 +560,8 @@ export default function DprReviewScreen() {
                     <span className="text-[11px] font-semibold text-slate-700">External Debt (₹)</span>
                     <input
                       type="number"
-                      value={formData.unsecuredLoansExternal || 0}
-                      onChange={(e) => handleInputChange('unsecuredLoansExternal', Number(e.target.value))}
+                      value={formData.unsecuredLoansExternal ?? ''}
+                      onChange={(e) => handleInputChange('unsecuredLoansExternal', e.target.value)}
                       className="w-full mt-1 px-3 py-1.5 text-xs font-mono border border-slate-300 rounded bg-white"
                       placeholder="0"
                     />
@@ -524,14 +586,14 @@ export default function DprReviewScreen() {
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-semibold text-slate-700">Annual Revenue Growth</span>
-                  <span className="font-mono font-bold text-[#0F2F57]">{formData.revenueGrowthPct}% p.a.</span>
+                  <span className="font-mono font-bold text-[#0F2F57]">{Number(formData.revenueGrowthPct) || 0}% p.a.</span>
                 </div>
                 <input
                   type="range"
                   min="0"
                   max="35"
                   step="0.5"
-                  value={formData.revenueGrowthPct}
+                  value={Number(formData.revenueGrowthPct) || 0}
                   onChange={(e) => handleInputChange('revenueGrowthPct', Number(e.target.value))}
                   className="w-full accent-[#0F2F57] cursor-pointer"
                 />
@@ -546,13 +608,13 @@ export default function DprReviewScreen() {
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-semibold text-slate-700">Gross Profit Margin %</span>
-                  <span className="font-mono font-bold text-[#0F2F57]">{formData.gpMarginPct}%</span>
+                  <span className="font-mono font-bold text-[#0F2F57]">{Number(formData.gpMarginPct) || 0}%</span>
                 </div>
                 <input
                   type="number"
                   step="0.1"
-                  value={formData.gpMarginPct}
-                  onChange={(e) => handleInputChange('gpMarginPct', Number(e.target.value))}
+                  value={formData.gpMarginPct ?? ''}
+                  onChange={(e) => handleInputChange('gpMarginPct', e.target.value)}
                   className="w-full px-3 py-1.5 text-xs font-mono border border-slate-300 rounded-lg"
                 />
               </div>
@@ -561,14 +623,14 @@ export default function DprReviewScreen() {
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-semibold text-slate-700">Annual OpEx Growth %</span>
-                  <span className="font-mono font-bold text-[#0F2F57]">{formData.opexGrowthPct}% p.a.</span>
+                  <span className="font-mono font-bold text-[#0F2F57]">{Number(formData.opexGrowthPct) || 0}% p.a.</span>
                 </div>
                 <input
                   type="range"
                   min="0"
                   max="25"
                   step="0.5"
-                  value={formData.opexGrowthPct}
+                  value={Number(formData.opexGrowthPct) || 0}
                   onChange={(e) => handleInputChange('opexGrowthPct', Number(e.target.value))}
                   className="w-full accent-[#0F2F57] cursor-pointer"
                 />
@@ -585,8 +647,8 @@ export default function DprReviewScreen() {
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">Debtors (DSO)</label>
                     <input
                       type="number"
-                      value={formData.debtorDays}
-                      onChange={(e) => handleInputChange('debtorDays', Number(e.target.value))}
+                      value={formData.debtorDays ?? ''}
+                      onChange={(e) => handleInputChange('debtorDays', e.target.value)}
                       className="w-full px-2 py-1 text-xs font-mono border border-slate-300 rounded"
                     />
                   </div>
@@ -594,8 +656,8 @@ export default function DprReviewScreen() {
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">Inventory (DIO)</label>
                     <input
                       type="number"
-                      value={formData.inventoryDays}
-                      onChange={(e) => handleInputChange('inventoryDays', Number(e.target.value))}
+                      value={formData.inventoryDays ?? ''}
+                      onChange={(e) => handleInputChange('inventoryDays', e.target.value)}
                       className="w-full px-2 py-1 text-xs font-mono border border-slate-300 rounded"
                     />
                   </div>
@@ -603,8 +665,8 @@ export default function DprReviewScreen() {
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">Creditors (DPO)</label>
                     <input
                       type="number"
-                      value={formData.creditorDays}
-                      onChange={(e) => handleInputChange('creditorDays', Number(e.target.value))}
+                      value={formData.creditorDays ?? ''}
+                      onChange={(e) => handleInputChange('creditorDays', e.target.value)}
                       className="w-full px-2 py-1 text-xs font-mono border border-slate-300 rounded"
                     />
                   </div>
@@ -616,11 +678,11 @@ export default function DprReviewScreen() {
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-semibold text-slate-700">Promoter PAT Retained / Drawings</span>
                   <span className="font-mono font-bold text-[#0F2F57]">
-                    {Math.round((1 - formData.promoterDrawingsPct) * 100)}% Retained
+                    {Math.round((1 - (Number(formData.promoterDrawingsPct) || 0.15)) * 100)}% Retained
                   </span>
                 </div>
                 <span className="text-[10px] text-slate-500">
-                  {Math.round(formData.promoterDrawingsPct * 100)}% withdrawn as personal drawings during profitable years
+                  {Math.round((Number(formData.promoterDrawingsPct) || 0.15) * 100)}% withdrawn as personal drawings during profitable years
                 </span>
               </div>
 

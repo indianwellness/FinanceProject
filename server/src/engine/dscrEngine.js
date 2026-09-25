@@ -78,17 +78,33 @@ export function calculateSolvencyRatios({
       currentRatio = Math.round((ca / cl) * 100) / 100;
     }
 
-    // 4. Total Outside Liabilities to Tangible Net Worth (TOL / TNW)
+    // 4. Total Outside Liabilities to Tangible Net Worth (TOL / TNW & TOL / ATNW)
+    // Under RBI & Indian Banking norms:
+    // Quasi-Equity (promoter subordinated debt) is added to Net Worth to form Adjusted TNW (ATNW).
+    // Outside Liabilities (TOL) EXCLUDE Quasi-Equity: Secured Loans + External Unsecured Loans + Current Liabilities.
     const netWorth = Number(bsYear.sourcesOfFunds?.totalNetWorth) || 0;
-    const totalOutsideLiabilities = (Number(bsYear.sourcesOfFunds?.totalSecuredLoans) || 0) +
-      (Number(bsYear.sourcesOfFunds?.totalUnsecuredLoans) || 0) +
-      (Number(bsYear.sourcesOfFunds?.totalCurrentLiabilities) || 0);
+    const quasiEquity = Number(bsYear.sourcesOfFunds?.unsecuredLoansQuasi) || 0;
+    const adjustedNetWorth = Number(bsYear.sourcesOfFunds?.adjustedTangibleNetWorth) || (netWorth + quasiEquity);
+
+    const externalUnsecured = Number(bsYear.sourcesOfFunds?.unsecuredLoansExternal) ?? (
+      quasiEquity > 0
+        ? Math.max(0, (Number(bsYear.sourcesOfFunds?.totalUnsecuredLoans) || 0) - quasiEquity)
+        : (Number(bsYear.sourcesOfFunds?.totalUnsecuredLoans) || 0)
+    );
+
+    const totalOutsideLiabilities = Math.round((
+      (Number(bsYear.sourcesOfFunds?.totalSecuredLoans) || 0) +
+      externalUnsecured +
+      (Number(bsYear.sourcesOfFunds?.totalCurrentLiabilities) || 0)
+    ) * 100) / 100;
 
     let tolTnw = null;
+    let tolAtnw = null;
     let isInsolvent = false;
 
-    if (netWorth > 0) {
-      tolTnw = Math.round((totalOutsideLiabilities / netWorth) * 100) / 100;
+    if (adjustedNetWorth > 0) {
+      tolAtnw = Math.round((totalOutsideLiabilities / adjustedNetWorth) * 100) / 100;
+      tolTnw = tolAtnw; // Primary bank solvency ratio for proposals with promoter debt
     } else {
       isInsolvent = true; // Negative or zero net worth signals technical insolvency
     }
@@ -111,6 +127,9 @@ export function calculateSolvencyRatios({
       icr,
       currentRatio,
       tolTnw,
+      tolAtnw,
+      adjustedNetWorth,
+      totalOutsideLiabilities,
       isInsolvent
     });
   });

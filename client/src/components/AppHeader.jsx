@@ -4,11 +4,12 @@ import { Download, Building2, BarChart3, Sliders, ShieldCheck, PlusCircle } from
 import { useCreditOS } from '../context/CreditOSContext';
 
 export default function AppHeader() {
-  const { data, showToast, resetSession } = useCreditOS();
+  const { data, dprInput, showToast, resetSession } = useCreditOS();
   const navigate = useNavigate();
 
   const navItems = [
     { to: '/dashboard', label: 'Dashboard', icon: BarChart3 },
+    { to: '/dpr-review', label: 'DPR Review', icon: Sliders },
     { to: '/details', label: 'Financial Details', icon: Sliders },
     { to: '/recommendations', label: 'Financing Routes', icon: ShieldCheck }
   ];
@@ -78,7 +79,7 @@ export default function AppHeader() {
             <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-md text-xs text-slate-700 whitespace-nowrap">
               <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
               <span className="font-medium max-w-[170px] truncate">
-                {data.businessProfile.businessName}
+                {dprInput?.entityName || data.businessProfile.businessName}
               </span>
             </div>
 

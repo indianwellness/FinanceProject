@@ -93,6 +93,10 @@ export function validateAndNormalizeConvergenceData(rawData = {}) {
 
   // 3. Balance Sheet Items
   const capital = Number(rawData.capital ?? rawData.shareCapital ?? 1000000);
+  if (!Number.isFinite(capital) || capital < 0) {
+    errors.push('Promoter capital must be a positive number.');
+  }
+
   const reservesSurplus = Number(rawData.reservesSurplus ?? 0);
   const tradeDebtors = Number(rawData.tradeDebtors ?? 0);
   const inventories = Number(rawData.inventories ?? rawData.stock ?? 0);
@@ -107,14 +111,18 @@ export function validateAndNormalizeConvergenceData(rawData = {}) {
   }
 
   const interestRate = Number(rawData.interestRate ?? 12.0);
-  if (interestRate < ASSUMPTION_GUARDRAILS.interestRate.min || interestRate > ASSUMPTION_GUARDRAILS.interestRate.max) {
+  if (!Number.isFinite(interestRate) || interestRate <= 0 || interestRate > 50) {
+    errors.push(`Interest rate (${interestRate}%) must be a valid positive rate under 50%.`);
+  } else if (interestRate < ASSUMPTION_GUARDRAILS.interestRate.min || interestRate > ASSUMPTION_GUARDRAILS.interestRate.max) {
     warnings.push(`Interest rate (${interestRate}%) is outside typical lending bounds (${ASSUMPTION_GUARDRAILS.interestRate.min}% - ${ASSUMPTION_GUARDRAILS.interestRate.max}%).`);
   } else if (interestRate > ASSUMPTION_GUARDRAILS.interestRate.warningThreshold) {
     warnings.push(`Interest rate (${interestRate}%) is high — above typical benchmark (${ASSUMPTION_GUARDRAILS.interestRate.warningThreshold}%).`);
   }
 
-  const tenureMonths = Math.max(ASSUMPTION_GUARDRAILS.tenureMonths.min, Number(rawData.tenureMonths ?? 60));
-  if (tenureMonths > ASSUMPTION_GUARDRAILS.tenureMonths.warningThreshold) {
+  const tenureMonths = Number(rawData.tenureMonths ?? 60);
+  if (!Number.isFinite(tenureMonths) || tenureMonths <= 0) {
+    errors.push('Loan repayment tenure must be at least 1 month.');
+  } else if (tenureMonths > ASSUMPTION_GUARDRAILS.tenureMonths.warningThreshold) {
     warnings.push(`Tenure of ${tenureMonths} months exceeds standard MSME norm (120 months).`);
   }
 
@@ -125,10 +133,9 @@ export function validateAndNormalizeConvergenceData(rawData = {}) {
 
   // 5. Growth Assumptions & Guardrails
   const revenueGrowthPct = Number(rawData.revenueGrowthPct ?? 10.0);
-  if (revenueGrowthPct < ASSUMPTION_GUARDRAILS.revenueGrowthPct.min || revenueGrowthPct > ASSUMPTION_GUARDRAILS.revenueGrowthPct.max) {
-    warnings.push(`Revenue growth rate (${revenueGrowthPct}%) is outside standard range (0-35%).`);
-  }
-  if (revenueGrowthPct > ASSUMPTION_GUARDRAILS.revenueGrowthPct.warningThreshold) {
+  if (!Number.isFinite(revenueGrowthPct) || revenueGrowthPct < 0 || revenueGrowthPct > 200) {
+    errors.push(`Revenue growth rate (${revenueGrowthPct}%) cannot be negative or exceed 200%.`);
+  } else if (revenueGrowthPct > ASSUMPTION_GUARDRAILS.revenueGrowthPct.warningThreshold) {
     warnings.push(`High revenue growth (${revenueGrowthPct}% p.a.) — institutional bank scrutiny likely.`);
   }
 
@@ -144,7 +151,9 @@ export function validateAndNormalizeConvergenceData(rawData = {}) {
     ? Number(rawData.gpMarginPct)
     : (netTurnover > 0 ? (grossProfit / netTurnover) * 100 : 30.0);
 
-  if (gpMarginPct < ASSUMPTION_GUARDRAILS.gpMarginPct.min || gpMarginPct > ASSUMPTION_GUARDRAILS.gpMarginPct.max) {
+  if (!Number.isFinite(gpMarginPct) || gpMarginPct <= 0 || gpMarginPct >= 100) {
+    errors.push(`Gross profit margin (${gpMarginPct}%) must be between 0% and 100%.`);
+  } else if (gpMarginPct < ASSUMPTION_GUARDRAILS.gpMarginPct.min || gpMarginPct > ASSUMPTION_GUARDRAILS.gpMarginPct.max) {
     warnings.push(`Gross profit margin (${gpMarginPct.toFixed(1)}%) is unusual for commercial enterprises.`);
   } else if (gpMarginPct > ASSUMPTION_GUARDRAILS.gpMarginPct.warningThreshold) {
     warnings.push(`Very high gross profit margin (${gpMarginPct.toFixed(1)}%) — bank scrutiny likely.`);
@@ -164,6 +173,9 @@ export function validateAndNormalizeConvergenceData(rawData = {}) {
     ? Math.max(10, Math.min(180, Math.round((tradeCreditors / cogs) * 365)))
     : Number(rawData.creditorDays ?? 30);
 
+  if (errors.length > 0) {
+    confidenceScore = 0.0;
+  }
   confidenceScore = Math.max(0.0, Math.min(1.0, Math.round(confidenceScore * 100) / 100));
 
   const normalizedData = {

@@ -10,11 +10,19 @@ import { generateDprProjections } from './src/engine/dprEngine.js';
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Configure in-memory file uploads with 20MB limit
+// Configure in-memory file uploads with 20MB limit and Excel extension validation
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 20 * 1024 * 1024 } // 20 MB max
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB max
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (['.xlsx', '.xls', '.xlsm'].includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid file type "${ext}". Only Excel spreadsheets (.xlsx, .xls) are accepted.`));
+    }
+  }
 });
 
 // Dynamic CORS configuration supporting local dev, Vercel deployments, and custom domains
@@ -104,10 +112,12 @@ app.post('/api/dpr/parse-excel', upload.single('file'), (req, res) => {
 app.get('/api/dpr/sample', (req, res) => {
   try {
     const candidatePaths = [
-      'C:\\Users\\Nitro 5\\Downloads\\Final Project Report 25-04-23 - Email.xlsx',
-      path.resolve('../Final Project Report 25-04-23 - Email.xlsx'),
-      path.resolve('Final Project Report 25-04-23 - Email.xlsx')
-    ];
+      path.resolve('data/sample_cma.xlsx'),
+      path.resolve('server/data/sample_cma.xlsx'),
+      path.resolve('../server/data/sample_cma.xlsx'),
+      process.env.SAMPLE_DPR_PATH,
+      'C:\\Users\\Nitro 5\\Downloads\\Final Project Report 25-04-23 - Email.xlsx'
+    ].filter(Boolean);
 
     const targetPath = candidatePaths.find(p => fs.existsSync(p));
     if (!targetPath) {
@@ -177,6 +187,28 @@ app.post('/api/dpr/generate', (req, res) => {
       error: `Engine execution failure: ${err.message}`
     });
   }
+});
+
+// Global error handling middleware (catches Multer errors, file rejections, JSON body errors)
+app.use((err, req, res, next) => {
+  console.error('Express API error:', err.message);
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        success: false,
+        error: 'Uploaded file exceeds the maximum permitted size of 20MB.'
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      error: `Upload error: ${err.message}`
+    });
+  }
+
+  return res.status(err.status || 400).json({
+    success: false,
+    error: err.message || 'An unexpected error occurred processing your request.'
+  });
 });
 
 // Bind to 0.0.0.0 for cloud container compatibility

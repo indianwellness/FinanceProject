@@ -17,12 +17,30 @@ import {
 import { useCreditOS } from '../context/CreditOSContext';
 
 export default function DashboardScreen() {
-  const { data } = useCreditOS();
+  const { data, dprOutput, dprInput } = useCreditOS();
   const navigate = useNavigate();
   const { businessProfile, scores, workingCapital, ratios, recommendations, receivablesAgeing } = data;
 
+  const isDprActive = Boolean(dprOutput && dprInput);
+
+  const businessName = isDprActive
+    ? dprInput.entityName
+    : businessProfile.businessName;
+
+  const constitution = isDprActive
+    ? (dprInput.entityType === 'pvt_ltd' ? 'Private Limited' : dprInput.entityType === 'llp' ? 'LLP' : dprInput.entityType === 'partnership' ? 'Partnership Firm' : 'Sole Proprietorship')
+    : (businessProfile.constitution || 'Private Limited');
+
+  const annualRevenueText = isDprActive
+    ? `₹${(dprInput.netTurnover / 100000).toFixed(1)} Lakh (Baseline)`
+    : businessProfile.annualRevenue;
+
   const handleEditProfile = () => {
-    navigate('/profile', { state: { fromDashboard: true } });
+    if (isDprActive) {
+      navigate('/dpr-review');
+    } else {
+      navigate('/profile', { state: { fromDashboard: true } });
+    }
   };
 
   // Dynamic Debtors Summation
@@ -47,26 +65,26 @@ export default function DashboardScreen() {
           <div>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-bold text-[#0F2F57] tracking-tight">
-                {businessProfile.businessName}
+                {businessName}
               </h1>
-              <Badge variant="navy">{businessProfile.constitution || 'Private Limited'}</Badge>
+              <Badge variant="navy">{constitution}</Badge>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
                 <ShieldCheck className="w-3 h-3" />
-                Verified Tally Ingestion
+                {isDprActive ? 'Verified DPR Synthesis' : 'Verified Tally Ingestion'}
               </span>
               <button
                 onClick={handleEditProfile}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-[#0F2F57] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded transition-colors cursor-pointer"
-                title="Calibrate business parameters"
+                title={isDprActive ? 'Re-calibrate DPR assumptions' : 'Calibrate business parameters'}
               >
                 <Edit3 className="w-3 h-3" />
-                <span>Edit Parameters</span>
+                <span>{isDprActive ? 'Re-Calibrate DPR' : 'Edit Parameters'}</span>
               </button>
             </div>
 
             <div className="text-xs text-slate-500 mt-2 flex flex-wrap items-center gap-x-6 gap-y-1.5">
               <span>Industry: <strong className="text-slate-800 font-semibold">{businessProfile.industry}</strong></span>
-              <span>Annual Revenue: <strong className="text-slate-800 font-semibold tabular-nums">{businessProfile.annualRevenue}</strong></span>
+              <span>Annual Revenue: <strong className="text-slate-800 font-semibold tabular-nums">{annualRevenueText}</strong></span>
               <span>Vintage: <strong className="text-slate-800 font-semibold">{businessProfile.vintage}</strong></span>
               <span>Jurisdiction: <strong className="text-slate-800 font-semibold">{businessProfile.state || 'Maharashtra'}</strong></span>
             </div>
@@ -82,6 +100,151 @@ export default function DashboardScreen() {
           </div>
         </div>
       </div>
+
+      {/* Synthesized Statutory DPR Overview Card (Active when DPR generated) */}
+      {isDprActive && (
+        <div className="bg-white border-2 border-emerald-500/40 rounded-xl p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 uppercase tracking-wider">
+                  Active DPR Model
+                </span>
+                <span className="text-xs text-slate-500 font-medium">
+                  Double-Entry Verified: Sources == Applications (0 Discrepancy)
+                </span>
+              </div>
+              <h2 className="text-lg font-bold text-[#0F2F57] mt-1">
+                Statutory DPR Financial Projections ({dprOutput.projectedPnl.length}-Year Horizon)
+              </h2>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => navigate('/dpr-review')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#0F2F57] bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors cursor-pointer"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Re-Calibrate Assumptions</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Key Facility & Solvency KPI Strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Term Loan Requested</div>
+              <div className="text-base font-bold text-[#0F2F57] mt-0.5 tabular-nums">
+                ₹{(dprInput.loanAmount / 100000).toFixed(2)} Lakh
+              </div>
+              <div className="text-[10px] text-slate-500">
+                {dprInput.interestRate}% • {dprInput.tenureMonths} Mos
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Average DSCR</div>
+              <div className="text-base font-bold text-[#0F2F57] mt-0.5 tabular-nums">
+                {dprOutput.solvencyRatios?.summary?.averageDscr ?? 'N/A'}x
+              </div>
+              <div className="text-[10px]">
+                <span className={`font-semibold ${
+                  dprOutput.solvencyRatios?.summary?.overallRating === 'GREEN' ? 'text-emerald-700' : 'text-amber-700'
+                }`}>
+                  Rating: {dprOutput.solvencyRatios?.summary?.overallRating}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">TOL / ATNW (Yr 1)</div>
+              <div className="text-base font-bold text-[#0F2F57] mt-0.5 tabular-nums">
+                {dprOutput.solvencyRatios?.annualRatios?.[0]?.tolAtnw ?? dprOutput.solvencyRatios?.annualRatios?.[0]?.tolTnw ?? 'N/A'}x
+              </div>
+              <div className="text-[10px] text-slate-500">
+                Net Worth: ₹{((dprOutput.projectedBalanceSheet[0]?.sourcesOfFunds?.adjustedTangibleNetWorth || dprOutput.projectedBalanceSheet[0]?.sourcesOfFunds?.totalNetWorth || 0) / 100000).toFixed(1)}L
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">CGTMSE Coverage</div>
+              <div className="text-base font-bold text-emerald-700 mt-0.5">
+                {dprOutput.solvencyRatios?.cgtmseEligibility?.isEligible ? 'Eligible' : 'Ineligible'}
+              </div>
+              <div className="text-[10px] text-slate-500">
+                ₹10 Cr Enhanced Ceiling
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Projection Summary Table */}
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-slate-100 text-slate-700 text-[11px] font-bold border-b border-slate-200 uppercase">
+                <tr>
+                  <th className="py-2.5 px-3">Metric (₹ Lakhs)</th>
+                  {dprOutput.projectedPnl.map((p) => (
+                    <th key={`head-${p.year}`} className="py-2.5 px-3 text-right">
+                      Year {p.year}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-mono">
+                <tr>
+                  <td className="py-2 px-3 font-sans font-semibold text-slate-800">Gross Turnover</td>
+                  {dprOutput.projectedPnl.map((p) => (
+                    <td key={`to-${p.year}`} className="py-2 px-3 text-right text-slate-900 tabular-nums">
+                      {(p.turnover / 100000).toFixed(2)}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-2 px-3 font-sans font-semibold text-slate-800">Gross Profit</td>
+                  {dprOutput.projectedPnl.map((p) => (
+                    <td key={`gp-${p.year}`} className="py-2 px-3 text-right text-slate-900 tabular-nums">
+                      {(p.grossProfit / 100000).toFixed(2)}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-2 px-3 font-sans font-semibold text-slate-800">EBITDA</td>
+                  {dprOutput.projectedPnl.map((p) => (
+                    <td key={`eb-${p.year}`} className="py-2 px-3 text-right text-slate-900 tabular-nums">
+                      {(p.ebitda / 100000).toFixed(2)}
+                    </td>
+                  ))}
+                </tr>
+                <tr className="bg-slate-50/50">
+                  <td className="py-2 px-3 font-sans font-semibold text-[#0F2F57]">Profit After Tax (PAT)</td>
+                  {dprOutput.projectedPnl.map((p) => (
+                    <td key={`pat-${p.year}`} className="py-2 px-3 text-right font-bold text-[#0F2F57] tabular-nums">
+                      {(p.pat / 100000).toFixed(2)}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-2 px-3 font-sans font-semibold text-slate-800">Adjusted Net Worth</td>
+                  {dprOutput.projectedBalanceSheet.map((b) => (
+                    <td key={`nw-${b.year}`} className="py-2 px-3 text-right text-slate-900 tabular-nums">
+                      {((b.sourcesOfFunds.adjustedTangibleNetWorth || b.sourcesOfFunds.totalNetWorth) / 100000).toFixed(2)}
+                    </td>
+                  ))}
+                </tr>
+                <tr className="bg-blue-50/40">
+                  <td className="py-2 px-3 font-sans font-bold text-blue-900">Annual DSCR</td>
+                  {dprOutput.solvencyRatios?.annualRatios?.map((r) => (
+                    <td key={`dscr-${r.year}`} className="py-2 px-3 text-right font-bold text-blue-900 tabular-nums">
+                      {r.dscr !== null ? `${r.dscr}x` : 'N/A'}
+                    </td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* The 3 Core Score Gauge Cards with Telemetry Badges */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">

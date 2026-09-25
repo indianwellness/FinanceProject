@@ -81,6 +81,8 @@ export function projectBalanceSheets({
 
     runningReserves += retainedPat;
     const totalNetWorth = Math.round((runningCapital + runningReserves) * 100) / 100;
+    // Adjusted Tangible Net Worth (ATNW) includes subordinated promoter Quasi-Equity (RBI/CMA benchmark)
+    const adjustedTangibleNetWorth = Math.round((totalNetWorth + unsecuredLoansQuasi) * 100) / 100;
 
     // 2. Secured Borrowings
     const emiYear = emiAnnualSchedule.find(e => e.year === y);
@@ -152,6 +154,7 @@ export function projectBalanceSheets({
         proprietorCapital: runningCapital,
         reservesAndSurplus: runningReserves,
         totalNetWorth,
+        adjustedTangibleNetWorth,
         termLoanClosing,
         bankCcOutstanding: activeCc,
         totalSecuredLoans,

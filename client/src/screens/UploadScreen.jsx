@@ -66,7 +66,7 @@ export default function UploadScreen() {
   };
 
   const handleDprUpload = async (file) => {
-    if (!file) return;
+    if (!file || isDprUploading) return;
     setIsDprUploading(true);
     showToast(`Parsing CA Project Report: ${file.name}...`);
 
@@ -79,37 +79,36 @@ export default function UploadScreen() {
         body: formData
       });
       const result = await res.json();
-      if (!result.success) {
-        throw new Error(result.error || 'Parsing failed');
+      if (!res.ok || !result.success) {
+        throw new Error(result.error || result.errors?.[0] || 'Failed to parse Excel workbook.');
       }
       setDprInput(result.normalizedData);
       setParserValidation(result.validation);
       showToast('CA Excel Report parsed! Opening Review Screen...');
       navigate('/dpr-review');
     } catch (err) {
-      console.warn('Backend upload failed, navigating to review with defaults:', err);
-      showToast('Opening DPR Review Screen...');
-      navigate('/dpr-review');
+      console.error('Backend upload failed:', err);
+      showToast(`Upload Failed: ${err.message}`);
     } finally {
       setIsDprUploading(false);
     }
   };
 
   const handleLoadSampleDpr = async () => {
+    if (isDprUploading) return;
     setIsDprUploading(true);
     showToast('Loading Shree Enterprises CA Project Report...');
     try {
       const res = await fetch('/api/dpr/sample');
       const result = await res.json();
-      if (!result.success) throw new Error(result.error);
+      if (!res.ok || !result.success) throw new Error(result.error || 'Server error loading sample.');
       setDprInput(result.normalizedData);
       setParserValidation(result.validation);
       showToast('Loaded Shree Enterprises CA DPR! Opening Review Screen...');
       navigate('/dpr-review');
     } catch (err) {
-      console.warn('Backend sample fetch failed, navigating to review:', err);
-      showToast('Opening DPR Review Screen...');
-      navigate('/dpr-review');
+      console.error('Backend sample fetch failed:', err);
+      showToast(`Sample Load Failed: ${err.message}`);
     } finally {
       setIsDprUploading(false);
     }
