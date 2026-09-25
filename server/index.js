@@ -6,6 +6,7 @@ import fs from 'fs';
 import { parseDprExcelWorkbook } from './src/parser/excelParser.js';
 import { validateAndNormalizeConvergenceData } from './src/parser/convergenceSchema.js';
 import { generateDprProjections } from './src/engine/dprEngine.js';
+import { generateDprExcelWorkbook } from './src/export/excelExportEngine.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -186,6 +187,85 @@ app.post('/api/dpr/generate', (req, res) => {
       success: false,
       error: `Engine execution failure: ${err.message}`
     });
+  }
+});
+
+/**
+ * POST /api/dpr/export-excel
+ * Generates an institutional multi-sheet Excel workbook (.xlsx) and streams it as a download.
+ * Accepts either:
+ * 1) { dpr, normalizedData } directly (if already computed by frontend)
+ * 2) Candidate data object (validates and runs engine on the fly)
+ */
+app.post('/api/dpr/export-excel', async (req, res) => {
+  try {
+    let dpr = req.body?.dpr;
+    let normalizedData = req.body?.normalizedData;
+
+    if (!dpr) {
+      // Validate and compute DPR on the fly
+      const candidateData = req.body || {};
+      const validation = validateAndNormalizeConvergenceData(candidateData);
+      if (!validation.isValid) {
+        return res.status(422).json({
+          success: false,
+          errors: validation.errors
+        });
+      }
+      normalizedData = validation.normalizedData;
+      dpr = generateDprProjections(normalizedData);
+    }
+
+    const buffer = await generateDprExcelWorkbook({ dpr, normalizedData });
+    const rawName = normalizedData?.entityName || dpr?.metadata?.entityName || 'MSME_Borrower';
+    const sanitizedName = rawName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fileName = `DPR_${sanitizedName}_Bank_Projections.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', buffer.length);
+    return res.send(buffer);
+  } catch (err) {
+    console.error('Error generating Excel export:', err);
+    return res.status(500).json({
+      success: false,
+      error: `Excel export failed: ${err.message}`
+    });
+  }
+});
+
+/**
+ * GET /api/dpr/sample-export
+ * Convenience endpoint: parses sample CA workbook, generates DPR, and streams bank-ready .xlsx
+ */
+app.get('/api/dpr/sample-export', async (req, res) => {
+  try {
+    const candidatePaths = [
+      path.resolve('data/sample_cma.xlsx'),
+      path.resolve('server/data/sample_cma.xlsx'),
+      path.resolve('../server/data/sample_cma.xlsx')
+    ];
+    const targetPath = candidatePaths.find(p => fs.existsSync(p));
+    if (!targetPath) {
+      return res.status(404).json({ success: false, error: 'Sample workbook not found on server' });
+    }
+
+    const parseResult = parseDprExcelWorkbook(targetPath);
+    const validation = validateAndNormalizeConvergenceData({
+      ...parseResult.normalizedData,
+      horizonYears: 5
+    });
+    const dpr = generateDprProjections(validation.normalizedData);
+    const buffer = await generateDprExcelWorkbook({ dpr, normalizedData: validation.normalizedData });
+
+    const fileName = 'DPR_Shree_Enterprises_Bank_Projections.xlsx';
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', buffer.length);
+    return res.send(buffer);
+  } catch (err) {
+    console.error('Error exporting sample Excel:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

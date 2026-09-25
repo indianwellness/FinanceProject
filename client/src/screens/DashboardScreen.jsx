@@ -12,16 +12,57 @@ import {
   Building2,
   Calendar,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Download,
+  RefreshCw,
+  FileSpreadsheet
 } from 'lucide-react';
 import { useCreditOS } from '../context/CreditOSContext';
 
 export default function DashboardScreen() {
-  const { data, dprOutput, dprInput } = useCreditOS();
+  const { data, dprOutput, dprInput, showToast } = useCreditOS();
   const navigate = useNavigate();
+  const [isExportingExcel, setIsExportingExcel] = React.useState(false);
+
   const { businessProfile, scores, workingCapital, ratios, recommendations, receivablesAgeing } = data;
 
   const isDprActive = Boolean(dprOutput && dprInput);
+
+  const handleDownloadExcel = async () => {
+    if (!dprOutput || !dprInput) return;
+    try {
+      setIsExportingExcel(true);
+      const res = await fetch('http://localhost:5000/api/dpr/export-excel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dpr: dprOutput, normalizedData: dprInput })
+      });
+
+      if (!res.ok) {
+        throw new Error('Server returned an error generating the Excel workbook.');
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const sanitizedName = (dprInput.entityName || 'MSME_Borrower').replace(/[^a-zA-Z0-9_-]/g, '_');
+      a.download = `DPR_${sanitizedName}_Bank_Projections.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      if (showToast) {
+        showToast('Bank-ready Excel DPR downloaded successfully!', 'success');
+      }
+    } catch (err) {
+      console.error('Download error:', err);
+      alert('Failed to download Excel report: ' + err.message);
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
 
   const businessName = isDprActive
     ? dprInput.entityName
@@ -119,14 +160,33 @@ export default function DashboardScreen() {
               </h2>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
                 onClick={() => navigate('/dpr-review')}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#0F2F57] bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors cursor-pointer"
               >
                 <Edit3 className="w-3.5 h-3.5" />
-                <span>Re-Calibrate Assumptions</span>
+                <span>Re-Calibrate</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadExcel}
+                disabled={isExportingExcel}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 border border-emerald-800 rounded-lg transition-all shadow-xs cursor-pointer"
+              >
+                {isExportingExcel ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Exporting Excel...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download Bank DPR (.xlsx)</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
