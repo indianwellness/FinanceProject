@@ -78,6 +78,8 @@ async function runPhase5Tests() {
   assert(bufferString.includes('%%EOF'), 'PDF contains valid %%EOF trailer termination');
   assert(bufferString.includes('MSME CreditOS Bank DPR Engine'), 'PDF metadata embeds Author: MSME CreditOS Bank DPR Engine');
   assert(bufferString.includes('Credit Appraisal Memorandum'), 'PDF metadata embeds Subject / Title');
+  const pageMatches = bufferString.match(/\/Type\s*\/Page\b/g) || [];
+  assert(pageMatches.length === 7, `PDF contains exactly 7 pages (got ${pageMatches.length})`);
 
   function extractTextFromPdf(pdfRaw) {
     let fullText = '';
