@@ -41,7 +41,9 @@ export function validateAndNormalizeConvergenceData(rawData = {}) {
     entityType = 'proprietorship';
   } else if (['firm', 'partnership_firm', 'partnership firm'].includes(entityType)) {
     entityType = 'partnership';
-  } else if (['company', 'private_limited', 'pvt ltd', 'pvt. ltd.'].includes(entityType)) {
+  } else if (['llp', 'limited liability partnership'].includes(entityType)) {
+    entityType = 'llp';
+  } else if (['company', 'private_limited', 'pvt ltd', 'pvt. ltd.', 'pvt ltd.', 'private limited'].includes(entityType)) {
     entityType = 'pvt_ltd';
   }
 
@@ -53,21 +55,38 @@ export function validateAndNormalizeConvergenceData(rawData = {}) {
 
   // 2. Base Financials (P&L)
   const netTurnover = Number(rawData.netTurnover ?? rawData.grossTurnover ?? 0);
-  if (netTurnover <= 0) {
+  if (!Number.isFinite(netTurnover) || netTurnover <= 0) {
     errors.push('Turnover must be greater than zero.');
+    confidenceScore = 0.0;
   }
 
-  const grossProfit = Number(rawData.grossProfit ?? 0);
-  const cogs = Number(rawData.cogs ?? (netTurnover - grossProfit));
+  let grossProfit = Number(rawData.grossProfit ?? 0);
+  let cogs = Number(rawData.cogs ?? 0);
 
-  // OpEx normalization (handles object or number)
+  if (grossProfit <= 0 && cogs > 0 && netTurnover > cogs) {
+    grossProfit = netTurnover - cogs;
+  } else if (grossProfit <= 0 && cogs <= 0 && netTurnover > 0) {
+    // If neither GP nor COGS was parsed, fallback to 25% GP margin
+    grossProfit = netTurnover * 0.25;
+    cogs = netTurnover * 0.75;
+    warnings.push('Gross Profit and COGS not found; estimated at 25% GP margin.');
+    confidenceScore -= 0.15;
+  } else if (cogs <= 0 && netTurnover > grossProfit) {
+    cogs = netTurnover - grossProfit;
+  }
+
+  // OpEx normalization (handles object or number with reliable fallback)
   let opex = 0;
-  if (typeof rawData.opex === 'number') {
-    opex = Math.max(0, rawData.opex);
-  } else if (typeof rawData.opex === 'object' && rawData.opex !== null) {
-    opex = Number(rawData.opex.total ?? rawData.opex.operatingExpenses ?? (netTurnover * 0.12));
+  const rawOpexVal = typeof rawData.opex === 'number'
+    ? rawData.opex
+    : (typeof rawData.opex === 'object' && rawData.opex !== null
+        ? Number(rawData.opex.total ?? rawData.opex.operatingExpenses ?? 0)
+        : 0);
+
+  if (rawOpexVal > 0) {
+    opex = rawOpexVal;
   } else {
-    opex = netTurnover * 0.12;
+    opex = netTurnover > 0 ? netTurnover * 0.12 : 0;
     warnings.push('Baseline OpEx not explicitly found; estimated at 12% of turnover.');
     confidenceScore -= 0.10;
   }
@@ -89,10 +108,16 @@ export function validateAndNormalizeConvergenceData(rawData = {}) {
 
   const interestRate = Number(rawData.interestRate ?? 12.0);
   if (interestRate < ASSUMPTION_GUARDRAILS.interestRate.min || interestRate > ASSUMPTION_GUARDRAILS.interestRate.max) {
-    warnings.push(`Interest rate (${interestRate}%) is outside typical lending bounds.`);
+    warnings.push(`Interest rate (${interestRate}%) is outside typical lending bounds (${ASSUMPTION_GUARDRAILS.interestRate.min}% - ${ASSUMPTION_GUARDRAILS.interestRate.max}%).`);
+  } else if (interestRate > ASSUMPTION_GUARDRAILS.interestRate.warningThreshold) {
+    warnings.push(`Interest rate (${interestRate}%) is high — above typical benchmark (${ASSUMPTION_GUARDRAILS.interestRate.warningThreshold}%).`);
   }
 
-  const tenureMonths = Math.max(12, Number(rawData.tenureMonths ?? 60));
+  const tenureMonths = Math.max(ASSUMPTION_GUARDRAILS.tenureMonths.min, Number(rawData.tenureMonths ?? 60));
+  if (tenureMonths > ASSUMPTION_GUARDRAILS.tenureMonths.warningThreshold) {
+    warnings.push(`Tenure of ${tenureMonths} months exceeds standard MSME norm (120 months).`);
+  }
+
   const moratoriumMonths = Math.max(0, Number(rawData.moratoriumMonths ?? 0));
   const ccAppliedFor = Number(rawData.ccAppliedFor ?? 0);
   const ccOdOutstanding = Number(rawData.ccOdOutstanding ?? 0);
@@ -100,28 +125,53 @@ export function validateAndNormalizeConvergenceData(rawData = {}) {
 
   // 5. Growth Assumptions & Guardrails
   const revenueGrowthPct = Number(rawData.revenueGrowthPct ?? 10.0);
+  if (revenueGrowthPct < ASSUMPTION_GUARDRAILS.revenueGrowthPct.min || revenueGrowthPct > ASSUMPTION_GUARDRAILS.revenueGrowthPct.max) {
+    warnings.push(`Revenue growth rate (${revenueGrowthPct}%) is outside standard range (0-35%).`);
+  }
   if (revenueGrowthPct > ASSUMPTION_GUARDRAILS.revenueGrowthPct.warningThreshold) {
     warnings.push(`High revenue growth (${revenueGrowthPct}% p.a.) — institutional bank scrutiny likely.`);
   }
 
   const opexGrowthPct = Number(rawData.opexGrowthPct ?? 8.0);
+  if (opexGrowthPct < ASSUMPTION_GUARDRAILS.opexGrowthPct.min || opexGrowthPct > ASSUMPTION_GUARDRAILS.opexGrowthPct.max) {
+    warnings.push(`OpEx growth rate (${opexGrowthPct}%) is outside expected range (0-25%).`);
+  }
+  if (opexGrowthPct > ASSUMPTION_GUARDRAILS.opexGrowthPct.warningThreshold) {
+    warnings.push(`High OpEx growth (${opexGrowthPct}%) — may depress projected margins.`);
+  }
+
   const gpMarginPct = rawData.gpMarginPct != null
     ? Number(rawData.gpMarginPct)
     : (netTurnover > 0 ? (grossProfit / netTurnover) * 100 : 30.0);
 
-  // 6. Working Capital Cycle Days
-  const debtorDays = Number(rawData.debtorDays ?? (netTurnover > 0 ? Math.round((tradeDebtors / netTurnover) * 365) : 45));
-  const inventoryDays = Number(rawData.inventoryDays ?? (cogs > 0 ? Math.round((inventories / cogs) * 365) : 30));
-  const creditorDays = Number(rawData.creditorDays ?? (cogs > 0 ? Math.round((tradeCreditors / cogs) * 365) : 30));
+  if (gpMarginPct < ASSUMPTION_GUARDRAILS.gpMarginPct.min || gpMarginPct > ASSUMPTION_GUARDRAILS.gpMarginPct.max) {
+    warnings.push(`Gross profit margin (${gpMarginPct.toFixed(1)}%) is unusual for commercial enterprises.`);
+  } else if (gpMarginPct > ASSUMPTION_GUARDRAILS.gpMarginPct.warningThreshold) {
+    warnings.push(`Very high gross profit margin (${gpMarginPct.toFixed(1)}%) — bank scrutiny likely.`);
+  }
 
-  confidenceScore = Math.max(0.1, Math.min(1.0, Math.round(confidenceScore * 100) / 100));
+  // 6. Working Capital Cycle Days
+  // Avoid 0-days collapse when tradeDebtors or inventories are 0 or unparsed:
+  const debtorDays = (tradeDebtors > 0 && netTurnover > 0)
+    ? Math.max(15, Math.min(180, Math.round((tradeDebtors / netTurnover) * 365)))
+    : Number(rawData.debtorDays ?? 45);
+
+  const inventoryDays = (inventories > 0 && cogs > 0)
+    ? Math.max(10, Math.min(180, Math.round((inventories / cogs) * 365)))
+    : Number(rawData.inventoryDays ?? 30);
+
+  const creditorDays = (tradeCreditors > 0 && cogs > 0)
+    ? Math.max(10, Math.min(180, Math.round((tradeCreditors / cogs) * 365)))
+    : Number(rawData.creditorDays ?? 30);
+
+  confidenceScore = Math.max(0.0, Math.min(1.0, Math.round(confidenceScore * 100) / 100));
 
   const normalizedData = {
     // Identity
     entityName,
     entityType,
     horizonYears: Math.min(10, Math.max(1, Number(rawData.horizonYears ?? 5))),
-    amountsUnit: 'absolute',
+    amountsUnit: rawData.amountsUnit ?? 'absolute',
 
     // P&L Baseline
     netTurnover,
@@ -165,7 +215,7 @@ export function validateAndNormalizeConvergenceData(rawData = {}) {
     inventoryDays,
     creditorDays,
     promoterDrawingsPct: Number(rawData.promoterDrawingsPct ?? 0.15),
-    isAdditionsUnder180Days: rawData.isAdditionsUnder180Days ?? true,
+    isAdditionsUnder180Days: rawData.isAdditionsUnder180Days ?? false,
     isSection115BAA: Boolean(rawData.isSection115BAA),
 
     // Metadata
